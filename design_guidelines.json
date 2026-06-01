@@ -1,0 +1,158 @@
+{
+  "app_name": "Pizza Denfert",
+  "personality": "6 Glass / Luxe DARK",
+  "personality_one_liner": "Cinematic, expensive, and atmospheric Michelin-style luxury with deep blacks and warm glowing gold/amber accents.",
+  "color": {
+    "surface": "#050505",
+    "onSurface": "#F7F5F0",
+    "surfaceSecondary": "#1A1A1A",
+    "onSurfaceSecondary": "#E8E6E1",
+    "surfaceTertiary": "#262626",
+    "onSurfaceTertiary": "#D1CFCA",
+    "surfaceInverse": "#F7F5F0",
+    "onSurfaceInverse": "#050505",
+    "brand": "#D4AF37",
+    "brandPrimary": "#D4AF37",
+    "onBrandPrimary": "#050505",
+    "brandSecondary": "#E67E22",
+    "onBrandSecondary": "#050505",
+    "brandTertiary": "#8A6D3B",
+    "onBrandTertiary": "#F7F5F0",
+    "success": "#2E7D32",
+    "onSuccess": "#FFFFFF",
+    "warning": "#F57F17",
+    "onWarning": "#050505",
+    "error": "#C62828",
+    "onError": "#FFFFFF",
+    "info": "#1565C0",
+    "onInfo": "#FFFFFF",
+    "border": "#262626",
+    "borderStrong": "#404040",
+    "divider": "#1A1A1A"
+  },
+  "typography": {
+    "displayFontFamily": "CormorantGaramond",
+    "textFontFamily": "Satoshi",
+    "scale": {
+      "sm": 12,
+      "base": 14,
+      "lg": 16,
+      "xl": 20,
+      "2xl": 24
+    }
+  },
+  "spacing": {
+    "rule": "Use generous vertical rhythm (lg/xl) to let the high-quality photography and elegant typography breathe. Avoid cramped layouts. Maintain consistent screen paddings.",
+    "xs": 4,
+    "sm": 8,
+    "md": 12,
+    "lg": 16,
+    "xl": 24,
+    "2xl": 32,
+    "3xl": 48
+  },
+  "radius_tokens": {
+    "sm": 6,
+    "md": 12,
+    "lg": 20,
+    "pill": 999
+  },
+  "shadow_tier": "0",
+  "navigation": "bottom_tabs",
+  "icon_set": "Feather",
+  "glassmorphism": {
+    "enabled": true,
+    "do's": [
+      "Use heavy glass on the bottom tab bar and sticky headers to create cinematic depth.",
+      "Apply frosted glass over brand-tinted or dark photo backdrops for featured menu items.",
+      "Ensure text on glass uses onSurface and has a tinted base (≥75% opacity) beneath for WCAG readability."
+    ],
+    "dont's": [
+      "Never blur body text regions, form fields, or dense list rows.",
+      "Avoid stacking more than 2 glass surfaces on a single screen."
+    ]
+  },
+  "platform_libraries": {
+    "glass": {
+      "ios": "expo-glass-effect",
+      "android": "expo-blur",
+      "low_end_android_fallback": "solid surfaceSecondary"
+    },
+    "image": "expo-image",
+    "blur": "expo-blur",
+    "bottom_sheet": "@gorhom/bottom-sheet",
+    "animation": "react-native-reanimated",
+    "gesture": "react-native-gesture-handler"
+  },
+  "screens": [
+    {
+      "name": "Home",
+      "purpose": "Immerse the user in the Pizza Denfert brand story with premium photography of the wood-fired oven and local ingredients, leading them to order or reserve.",
+      "states": {
+        "loading": "Centered elegant gold spinner on pure black background.",
+        "empty": "N/A - Home is static content and feature cards.",
+        "error": "Elegant text message 'Unable to load our story' with a gold Retry button."
+      },
+      "layout": "Cinematic full-screen hero image with vertical gradient scrim (0% to 80% surface at bottom) overlaying the restaurant name in Cormorant Garamond. Followed by elegant single-column story cards highlighting 'French Flour & Italian Cheese' with atmospheric wood-fired oven background photos. Minimalist sticky CTA at bottom."
+    },
+    {
+      "name": "Menu",
+      "purpose": "Showcase the artisanal pizzas and menu items with dark, moody photography, elegant typography, and a seamless cart addition flow.",
+      "states": {
+        "loading": "Staggered skeleton cards with a subtle dark shimmer.",
+        "empty": "Refined illustration/icon with 'Menu is currently being updated' and a refresh button.",
+        "error": "Elegant error message with a retry option."
+      },
+      "layout": "Sticky glass header with horizontally scrolling category pills (Traditional, Signature, etc.). Two-column grid for pizzas with edge-to-edge images in the card, a dark vertical scrim, and gold typography. Floating Action Button (glass) for Cart."
+    },
+    {
+      "name": "Reservation",
+      "purpose": "Allow users to book a table effortlessly in a sophisticated interface resembling a high-end concierge service.",
+      "states": {
+        "loading": "Spinner over a subtly blurred interior background.",
+        "empty": "No past reservations text with an inviting 'Book a Table' CTA.",
+        "error": "Error fetching availability with a retry option."
+      },
+      "layout": "Large atmospheric restaurant interior image at the top. A clean, single-column form below for date, time, and party size with prominent gold accent interactive states. Sticky 'Confirm Reservation' button at bottom."
+    },
+    {
+      "name": "Account",
+      "purpose": "Manage user profile, loyalty points (QR code), order history, and settings in a luxurious, VIP-feeling dashboard.",
+      "states": {
+        "loading": "Subtle loading spinner.",
+        "empty": "Prompt to 'Sign in to access your Pizza Denfert VIP benefits'.",
+        "error": "Error loading account details with retry."
+      },
+      "layout": "Top section shows a 'VIP Loyalty Card' as a glassmorphic surface with a subtle gold gradient and the user's QR code. Below are list rows for Order History, Favorites, and Settings, using minimal dividers and feather icons."
+    }
+  ],
+  "images": {
+    "hero_home": {
+      "url": "https://images.pexels.com/photos/33593005/pexels-photo-33593005.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Three gourmet wood-fired pizzas with diverse toppings"
+    },
+    "story_oven": {
+      "url": "https://images.pexels.com/photos/32641697/pexels-photo-32641697.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Traditional wood-fired oven showcasing vibrant flames"
+    },
+    "restaurant_interior": {
+      "url": "https://images.pexels.com/photos/4997894/pexels-photo-4997894.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=650&w=940",
+      "alt": "Interior of contemporary dark restaurant with long set dining table"
+    },
+    "loyalty_qr": {
+      "url": "https://images.unsplash.com/photo-1550482768-88b710a445fd?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDQ2NDF8MHwxfHNlYXJjaHwxfHxnb2xkZW4lMjBRUiUyMGNvZGUlMjBsdXh1cnklMjBkZXNpZ258ZW58MHx8fHwxNzgwMjk5Nzc5fDA&ixlib=rb-4.1.0&q=85",
+      "alt": "Abstract QR code pattern"
+    }
+  },
+  "instructions_to_main_agent": [
+    "Strictly follow the '6 Glass / Luxe DARK' personality. Use deep black (#050505) as the primary background.",
+    "Implement CormorantGaramond for all headings and large text, and Satoshi for body and UI elements. Ensure maximum weight used is 500.",
+    "For any text placed over the premium food photography, you MUST implement a gradient scrim (top to bottom, transparent to ≥75% surfaceInverse) to guarantee WCAG readability.",
+    "Use glassmorphism (expo-blur) for the bottom tab bar, sticky headers, and floating action buttons. Ensure the glass surfaces have a dark tinted base so text on top remains legible.",
+    "Build the Home screen as a storytelling cinematic experience, utilizing the `hero_home` and `story_oven` images to emphasize the artisanal, wood-fired quality.",
+    "Integrate subtle haptic feedback for adding items to the cart, switching tabs, and confirming reservations.",
+    "Avoid using any blue, purple, or indigo colors. Stick strictly to the black, cream, gold, and warm amber accents defined in the color palette.",
+    "Do NOT use emojis anywhere in the system UI.",
+    "Implement the loyalty card in the Account tab as a premium glassmorphic VIP card featuring the QR code."
+  ]
+}
