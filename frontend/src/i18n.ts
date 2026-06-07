@@ -6,7 +6,7 @@ export type Lang = "fr" | "en";
 export const translations = {
   fr: {
     appName: "Pizza Denfert",
-    tagline: "L'artisanat italo-français à Lyon",
+    tagline: "Pizzeria artisanale franco-italienne",
     address: "61 Rue Denfert-Rochereau, 69004 Lyon",
     hoursLunch: "Déjeuner · 10h30 - 15h00",
     hoursDinner: "Dîner · 18h00 - 23h00",
@@ -16,8 +16,7 @@ export const translations = {
     account: "Compte",
     seeMenu: "Voir le menu",
     bookTable: "Réserver une table",
-    presentation1: "Nous utilisons une farine française traditionnelle sélectionnée et des ingrédients locaux provenant principalement de la région Rhône-Alpes.",
-    presentation2: "Nos recettes s'inspirent du meilleur des traditions culinaires italiennes et françaises afin de proposer des pizzas artisanales généreuses, authentiques et de qualité.",
+    presentation: "Pizza Denfert allie farine française traditionnelle, produits locaux de la région Rhône-Alpes et savoir-faire italien authentique pour créer des pizzas artisanales uniques, inspirées des traditions culinaires françaises et italiennes.",
     pillars: {
       flour: "Farine française traditionnelle",
       local: "Produits locaux Rhône-Alpes",
@@ -52,15 +51,14 @@ export const translations = {
   },
   en: {
     appName: "Pizza Denfert",
-    tagline: "Franco-Italian artistry in Lyon",
+    tagline: "Franco-Italian artisan pizzeria",
     address: "61 Rue Denfert-Rochereau, 69004 Lyon",
     hoursLunch: "Lunch · 10:30 AM - 3:00 PM",
     hoursDinner: "Dinner · 6:00 PM - 11:00 PM",
     home: "Home", menu: "Menu", reserve: "Reserve", account: "Account",
     seeMenu: "View menu",
     bookTable: "Book a table",
-    presentation1: "We use carefully selected traditional French flour and local ingredients sourced mainly from the Rhône-Alpes region.",
-    presentation2: "Our recipes draw on the best of Italian and French culinary traditions to offer generous, authentic and high-quality artisan pizzas.",
+    presentation: "Pizza Denfert combines traditional French flour, local Rhône-Alpes ingredients, and authentic Italian know-how to create unique artisanal pizzas inspired by both French and Italian culinary traditions.",
     pillars: {
       flour: "Traditional French flour",
       local: "Rhône-Alpes local produce",

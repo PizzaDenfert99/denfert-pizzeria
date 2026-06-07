@@ -100,15 +100,6 @@ async def startup():
     await db.menu.delete_many({})
     await db.menu.insert_many([dict(m) for m in SEED])
     log.info(f"Seeded {len(SEED)} menu items")
-    if not await db.users.find_one({"email": "demo@pizzadenfert.fr"}):
-        await db.users.insert_one({
-            "user_id": "user_" + secrets.token_hex(6),
-            "email": "demo@pizzadenfert.fr", "password": hp("Demo1234!"),
-            "name": "Sophie Martin", "is_admin": False,
-            "pizza_count": 0, "qr_token": secrets.token_hex(12),
-            "rewards_redeemed": [], "rewards_history": [],
-            "created_at": now(),
-        })
     if not await db.users.find_one({"email": "admin@pizzadenfert.fr"}):
         await db.users.insert_one({
             "user_id": "admin_" + secrets.token_hex(6),
@@ -156,8 +147,12 @@ async def gsession(b: GSession):
              "qr_token": secrets.token_hex(12), "rewards_redeemed": [], "rewards_history": [],
              "created_at": now()}
         await db.users.insert_one(u)
-    await db.user_sessions.insert_one({"session_token": d["session_token"], "user_id": u["user_id"],
-                                        "expires_at": now() + timedelta(days=7), "created_at": now()})
+    await db.user_sessions.update_one(
+        {"session_token": d["session_token"]},
+        {"$set": {"session_token": d["session_token"], "user_id": u["user_id"],
+                  "expires_at": now() + timedelta(days=7), "created_at": now()}},
+        upsert=True,
+    )
     u.pop("_id", None); u.pop("password", None)
     return {"token": d["session_token"], "user": u}
 

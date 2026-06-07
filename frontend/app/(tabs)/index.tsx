@@ -1,5 +1,5 @@
 import React from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, Image as RNImage } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -10,6 +10,7 @@ import { useI18n } from "@/src/i18n";
 
 const HERO = "https://images.pexels.com/photos/33593005/pexels-photo-33593005.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=1200&w=1200";
 const RESTAURANT = "https://images.pexels.com/photos/4997894/pexels-photo-4997894.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=900&w=1200";
+const LOGO = "https://customer-assets.emergentagent.com/job_denfert-pizzeria/artifacts/nwj3edom_file_00000000005c71f489c484606f9b5e35.png";
 
 export default function Home() {
   const { t, lang, setLang } = useI18n();
@@ -33,17 +34,15 @@ export default function Home() {
           <LinearGradient colors={["rgba(5,5,5,0.4)", "rgba(5,5,5,0.6)", "rgba(5,5,5,1)"]} locations={[0, 0.55, 1]} style={StyleSheet.absoluteFillObject} />
           <SafeAreaView edges={["top"]} style={{ flex: 1, padding: theme.space.xl, justifyContent: "space-between" }}>
             <View style={styles.headerRow}>
-              <View style={styles.logoMark}>
-                <Text style={styles.logoLetter}>PD</Text>
-              </View>
+              <View style={{ width: 64 }} />
               <Pressable testID="lang-toggle" onPress={() => setLang(lang === "fr" ? "en" : "fr")} style={styles.langBtn}>
                 <Feather name="globe" size={12} color={theme.color.brand} />
                 <Text style={styles.langTxt}>{lang.toUpperCase()}</Text>
               </Pressable>
             </View>
-            <View>
-              <Text style={styles.lyon}>LYON · 4ᵉ ARRDT</Text>
-              <Text style={styles.heroTitle}>Pizza{"\n"}Denfert</Text>
+            <View style={{ alignItems: "center" }}>
+              <RNImage source={{ uri: LOGO }} style={styles.brandLogo} resizeMode="contain" />
+              <Text style={styles.lyon}>LYON · 4ᵉ ARRONDISSEMENT</Text>
               <Text style={styles.heroTag}>{t("tagline")}</Text>
               <Pressable testID="hero-menu-btn" onPress={() => router.push("/(tabs)/menu")} style={styles.cta}>
                 <Feather name="book-open" size={16} color={theme.color.onBrandPrimary} />
@@ -56,8 +55,7 @@ export default function Home() {
         {/* PRESENTATION */}
         <View style={{ padding: theme.space.xl, paddingTop: theme.space.xxxl }}>
           <Text style={styles.eyebrow}>— {lang === "fr" ? "NOTRE MAISON" : "OUR HOUSE"}</Text>
-          <Text style={styles.body}>{t("presentation1")}</Text>
-          <Text style={[styles.body, { marginTop: theme.space.lg }]}>{t("presentation2")}</Text>
+          <Text style={styles.body}>{t("presentation")}</Text>
         </View>
 
         {/* PILLARS */}
@@ -102,14 +100,12 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.color.surface },
   hero: { width: "100%", height: 640 },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  logoMark: { width: 52, height: 52, borderRadius: 26, borderWidth: 1.5, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.4)" },
-  logoLetter: { color: theme.color.brand, fontSize: 16, fontWeight: "700", letterSpacing: 1 },
+  brandLogo: { width: 260, height: 260, marginBottom: -6 },
   langBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 12, height: 32, borderRadius: 999, borderWidth: 1, borderColor: theme.color.borderStrong, backgroundColor: "rgba(0,0,0,0.4)" },
   langTxt: { color: theme.color.brand, fontSize: 11, fontWeight: "700", letterSpacing: 1 },
-  lyon: { color: theme.color.brand, letterSpacing: 3, fontSize: 11, fontWeight: "700", marginBottom: 12 },
-  heroTitle: { color: theme.color.onSurface, fontSize: 72, lineHeight: 72, fontWeight: "300", letterSpacing: -2 },
-  heroTag: { color: theme.color.onSurfaceTertiary, fontSize: 15, marginTop: 8, fontStyle: "italic" },
-  cta: { flexDirection: "row", gap: 10, alignSelf: "flex-start", paddingHorizontal: 24, height: 54, borderRadius: theme.radius.md, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center", marginTop: theme.space.xl },
+  lyon: { color: theme.color.brand, letterSpacing: 4, fontSize: 11, fontWeight: "700", marginTop: 8 },
+  heroTag: { color: theme.color.onSurfaceTertiary, fontSize: 14, marginTop: 12, fontStyle: "italic", textAlign: "center", paddingHorizontal: theme.space.xl },
+  cta: { flexDirection: "row", gap: 10, paddingHorizontal: 32, height: 54, borderRadius: theme.radius.md, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center", marginTop: theme.space.xl, alignSelf: "center" },
   ctaTxt: { color: theme.color.onBrandPrimary, fontWeight: "700", letterSpacing: 1, fontSize: 13 },
   ctaGhost: { flexDirection: "row", gap: 8, alignSelf: "flex-start", paddingHorizontal: 20, height: 48, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", marginTop: theme.space.xl },
   ctaGhostTxt: { color: theme.color.brand, fontWeight: "700", letterSpacing: 1, fontSize: 12 },

@@ -7,12 +7,14 @@ import { Feather } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from "expo-linking";
 import { useRouter } from "expo-router";
+import { Image as RNImage } from "react-native";
 import { useAuth } from "@/src/auth-context";
 import { useI18n } from "@/src/i18n";
 import { api, setToken } from "@/src/api";
 import { theme } from "@/src/theme";
 
 const HERO = "https://images.pexels.com/photos/33593005/pexels-photo-33593005.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=900&w=1200";
+const LOGO = "https://customer-assets.emergentagent.com/job_denfert-pizzeria/artifacts/nwj3edom_file_00000000005c71f489c484606f9b5e35.png";
 
 const REWARD_INFO: Record<string, { fr: string; en: string; threshold: number; icon: any }> = {
   coffee: { fr: "Café offert", en: "Free coffee", threshold: 3, icon: "coffee" },
@@ -111,10 +113,13 @@ export default function Account() {
                 <Feather name="globe" size={12} color={theme.color.brand} />
                 <Text style={styles.langTxt}>{lang.toUpperCase()}</Text>
               </Pressable>
-              <View style={{ marginTop: theme.space.xxl, marginBottom: theme.space.xl }}>
+              <View style={{ alignItems: "center", marginTop: theme.space.lg }}>
+                <RNImage source={{ uri: LOGO }} style={styles.authLogo} resizeMode="contain" />
+              </View>
+              <View style={{ marginTop: theme.space.lg, marginBottom: theme.space.xl, alignItems: "center" }}>
                 <Text style={styles.eyebrow}>— {lang === "fr" ? "ESPACE CLIENT" : "MEMBER AREA"}</Text>
-                <Text style={styles.bigTitle}>{lang === "fr" ? "Rejoignez\nnotre programme" : "Join our\nrewards program"}</Text>
-                <Text style={styles.subTxt}>{t("pointsHint")}</Text>
+                <Text style={[styles.bigTitle, { textAlign: "center" }]}>{lang === "fr" ? "Programme\nde fidélité" : "Rewards\nprogram"}</Text>
+                <Text style={[styles.subTxt, { textAlign: "center" }]}>{t("pointsHint")}</Text>
               </View>
 
               <Pressable testID="google-signin-btn" onPress={google} style={styles.googleBtn} disabled={authLoading}>
@@ -145,7 +150,6 @@ export default function Account() {
                     : (lang === "fr" ? "Déjà un compte ? Se connecter" : "Have an account? Sign in")}
                 </Text>
               </Pressable>
-              <Text style={styles.demoHint}>{lang === "fr" ? "Démo : demo@pizzadenfert.fr / Demo1234!" : "Demo: demo@pizzadenfert.fr / Demo1234!"}</Text>
             </ScrollView>
           </KeyboardAvoidingView>
         </SafeAreaView>
@@ -317,7 +321,7 @@ const styles = StyleSheet.create({
   submit: { height: 54, borderRadius: theme.radius.md, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center", marginTop: theme.space.sm },
   submitTxt: { color: theme.color.onBrandPrimary, fontSize: 14, fontWeight: "700", letterSpacing: 1 },
   toggle: { color: theme.color.brand, textAlign: "center", fontSize: 13 },
-  demoHint: { color: theme.color.muted, textAlign: "center", fontSize: 11, marginTop: theme.space.xl },
+  authLogo: { width: 220, height: 220 },
   loyaltyCard: { marginTop: theme.space.xl, borderRadius: theme.radius.lg, padding: theme.space.xl, borderWidth: 1, borderColor: "rgba(212,175,55,0.4)", overflow: "hidden" },
   cardHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   cardEyebrow: { color: theme.color.brand, fontSize: 10, letterSpacing: 3, fontWeight: "700" },
