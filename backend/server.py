@@ -14,7 +14,7 @@ load_dotenv(ROOT / ".env")
 
 client = AsyncIOMotorClient(os.environ["MONGO_URL"])
 db = client[os.environ["DB_NAME"]]
-JWT_SECRET = os.environ.get("JWT_SECRET", "denfert-2026")
+JWT_SECRET = os.environ["JWT_SECRET"]
 
 app = FastAPI(title="Pizza Denfert API")
 api = APIRouter(prefix="/api")
