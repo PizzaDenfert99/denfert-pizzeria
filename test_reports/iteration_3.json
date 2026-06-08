@@ -1,0 +1,54 @@
+{
+  "summary": "Iteration 3 backend regression + new-feature tests: 51/51 PASSED (28 from existing test_admin_flows.py + 23 new in test_staff_dashboard_iter3.py). Verified GET /api/admin/staff (200 + row schema + 403 for non-admin), PATCH /api/admin/staff/{id}/role (200 + reflected in list, 400 invalid role, 404 unknown user, 403 customer), PATCH /api/admin/staff/{id}/disable (toggle persists, 400 self-disable, 400 last active owner), DELETE /api/admin/staff/{id} (200, 400 self, 400 last owner), POST /api/admin/customer/add-pizza with pizza_id='p-margherita' (records pizza_event → surfaces in dashboard.top_pizzas), GET /api/admin/dashboard?period={today,week,month,all,bogus→all} (full payload shape + types), and the new disabled-account auth check inside cu() (disabled flag → 403 on /auth/me for both legacy JWT token and OTP-session token). Suite is stable across 3 consecutive runs.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/admin/staff/create",
+        "issue": "When role='owner' the handler uses the user_id prefix 'admin_' (line 485) but for role='staff' it uses 'staff_'. This is internal-only but the prefix is referenced by /api/admin/search to filter out admins (it excludes 'admin_*' but NOT 'staff_*'). Confirm intentional: staff-role admins ARE excluded by the {is_admin:{$ne:true}} mongo filter anyway, so this is cosmetic, but the prefix mismatch between owner/manager/cashier vs staff is easy to miss."
+      },
+      {
+        "endpoint": "POST /api/admin/staff/create",
+        "issue": "Created admin/staff documents do not include a `disabled: false` field. GET /api/admin/staff coerces with bool(r.get('disabled', False)) so it works, but downstream consumers querying mongo directly with {disabled: false} would miss them (e.g. the 'last active owner' query uses {$ne: True} which is the right pattern — but the inconsistency is worth knowing)."
+      },
+      {
+        "endpoint": "GET /api/admin/dashboard",
+        "issue": "Period filter for `rewards_redeemed` compares `rewards_history.redeemed_at` as an ISO string ($gte: start.isoformat()). String comparisons work for ISO-8601 UTC but are fragile (timezone suffix, missing 'Z'); safer to store and compare as native datetime."
+      },
+      {
+        "endpoint": "JWT key",
+        "issue": "Still using 12-byte JWT_SECRET; PyJWT logs InsecureKeyLengthWarning on every login/decode. Carry-over from iteration 2."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_admin_flows.py",
+    "/app/backend/tests/test_staff_dashboard_iter3.py",
+    "/app/test_reports/pytest/pytest_results_iter3.xml"
+  ],
+  "action_items": [
+    "Optional: store an explicit `disabled: false` on new staff documents in admin_create_staff for consistency with later toggle states.",
+    "Optional: convert rewards_history.redeemed_at to native datetime (and update aggregations) so period filtering does not rely on ISO-8601 lexicographic ordering.",
+    "Optional: rotate JWT_SECRET to a >=32 byte value to silence PyJWT InsecureKeyLengthWarning."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 713 lines — past the 700-line soft cap. Consider extracting auth, loyalty, and admin routers into separate modules.",
+    "admin_dashboard mixes lifetime and period-aware aggregations in one handler with conditional branches; readability would benefit from extracting period-aware helpers (pizzas_in_period, rewards_in_period).",
+    "test_credentials.md still references legacy email/password accounts for customers (`client.test@denfert.fr` / `Test1234!`) that no longer exist — customer accounts are now OTP-only. Update or delete that section."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_staff_dashboard_iter3.py (new file, 23 tests covering A–G)"
+  ],
+  "success_rate": {"backend": "100% (51/51)", "frontend": "skipped per request"},
+  "seed_data_creation": "Tests create TEST-prefixed staff (TEST iter3 staff staff/cashier, TEST iter3 owner owner, TEST iter3 owner-del owner, TEST iter3 disabled-flow staff) and OTP customers (TEST iter3 customer / TEST iter3 disabled-flow). Tests are self-cleanup-aware: orphaned explicit owners from prior runs are normalised back to role='staff' at the start of last-owner tests via the mongo fixture (MONGO_URL+DB_NAME from env). Pizza_events collection accumulates entries with pizza_id='p-margherita' across runs.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run both files together: `pytest /app/backend/tests/test_admin_flows.py /app/backend/tests/test_staff_dashboard_iter3.py -v`. Stable at 51/51 across 3 consecutive runs. The iter3 file uses a pymongo fixture (MONGO_URL + DB_NAME from env) to (a) inject disabled=true on the seeded admin for the cu() test, and (b) normalise any leftover explicit 'owner' rows back to 'staff' before the last-owner tests, so the suite is robust against orphaned data from earlier runs. The seeded admin row has NO `role` field, so `role=='owner'` lookups only count explicit owners — when the test creates one new owner that becomes the 'last' one and disable/delete is correctly blocked. Frontend skipped per request.",
+  "rca_of_issue": "No production bugs found in this iteration; the two intermediate failures during test authoring were both test-isolation issues caused by orphaned `role='owner'` documents left behind by prior runs of the suite (the DELETE endpoint correctly refuses to delete the last explicit owner, so the cleanup in `test_cannot_disable_last_active_owner`'s `finally` block needed to demote → delete instead of delete directly; additionally `test_cannot_delete_last_owner` and `test_cannot_disable_last_active_owner` now proactively reset any other explicit owners to role='staff' via the mongo fixture before exercising the last-owner guard). Server-side last-owner / self-action guards behaved exactly as specified throughout."
+}

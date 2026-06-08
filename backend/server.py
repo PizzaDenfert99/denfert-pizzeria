@@ -63,6 +63,15 @@ class CreateStaffIn(BaseModel):
     phone: str
     name: str
     role: str = "staff"  # owner | manager | cashier | staff
+class UpdateRoleIn(BaseModel):
+    role: str
+class DisableIn(BaseModel):
+    disabled: bool
+class AdminPizzaInExt(BaseModel):
+    user_id: str
+    qr_token: str
+    pizza_count: int = 1
+    pizza_id: Optional[str] = None  # optional reference to menu.id for popularity tracking
 
 async def cu(authorization: Optional[str] = Header(None)) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
@@ -74,12 +83,21 @@ async def cu(authorization: Optional[str] = Header(None)) -> dict:
         if exp and exp.tzinfo is None: exp = exp.replace(tzinfo=timezone.utc)
         if exp and exp > now():
             u = await db.users.find_one({"user_id": s["user_id"]}, {"_id": 0, "password": 0})
-            if u: return u
+            if u:
+                if u.get("disabled"):
+                    raise HTTPException(403, "Account disabled")
+                return u
     try:
         p = jwt.decode(tok, JWT_SECRET, algorithms=["HS256"])
         u = await db.users.find_one({"user_id": p["sub"]}, {"_id": 0, "password": 0})
-        if u: return u
-    except: pass
+        if u:
+            if u.get("disabled"):
+                raise HTTPException(403, "Account disabled")
+            return u
+    except HTTPException:
+        raise
+    except Exception:
+        pass
     raise HTTPException(401, "Invalid token")
 
 # Menu: pizzas have prices_by_size, others have single price
@@ -375,15 +393,23 @@ async def admin_scan(b: ScanIn, authorization: Optional[str] = Header(None)):
 
 
 @api.post("/admin/customer/add-pizza")
-async def admin_add_pizza(b: AdminPizzaIn, authorization: Optional[str] = Header(None)):
-    """Admin adds pizza(s) to a customer's loyalty count."""
-    await _require_admin(authorization)
+async def admin_add_pizza(b: AdminPizzaInExt, authorization: Optional[str] = Header(None)):
+    """Admin adds pizza(s) to a customer's loyalty count and logs the event."""
+    admin = await _require_admin(authorization)
     if b.pizza_count < 1 or b.pizza_count > 20:
         raise HTTPException(400, "Invalid count")
     user = await db.users.find_one({"user_id": b.user_id, "qr_token": b.qr_token})
     if not user:
         raise HTTPException(404, "Customer not found")
     await db.users.update_one({"user_id": b.user_id}, {"$inc": {"pizza_count": b.pizza_count}})
+    # Log every add event for time-windowed analytics + popular pizzas.
+    await db.pizza_events.insert_one({
+        "user_id": b.user_id,
+        "count": b.pizza_count,
+        "pizza_id": b.pizza_id,
+        "admin_id": admin.get("user_id"),
+        "at": now(),
+    })
     nu = await db.users.find_one({"user_id": b.user_id}, {"_id": 0, "password": 0})
     return _customer_payload(nu)
 
@@ -468,49 +494,194 @@ async def admin_create_staff(b: CreateStaffIn, authorization: Optional[str] = He
     return {"created": user, "note": "Use phone + OTP to login as this staff member"}
 
 
+@api.get("/admin/staff")
+async def admin_list_staff(authorization: Optional[str] = Header(None)):
+    """List all admin/staff accounts."""
+    me_admin = await _require_admin(authorization)
+    rows = await db.users.find(
+        {"is_admin": True},
+        {"_id": 0, "password": 0, "qr_token": 0, "rewards_history": 0, "rewards_redeemed": 0, "pizza_count": 0},
+    ).sort("created_at", 1).to_list(200)
+    out = []
+    for r in rows:
+        out.append({
+            "user_id": r["user_id"],
+            "name": r.get("name") or r.get("email") or r.get("phone"),
+            "email": r.get("email"),
+            "phone": r.get("phone"),
+            "role": r.get("role", "owner"),
+            "disabled": bool(r.get("disabled", False)),
+            "is_self": r["user_id"] == me_admin["user_id"],
+            "created_at": (r.get("created_at").isoformat() if r.get("created_at") else None),
+        })
+    return out
+
+
+def _check_can_manage(actor: dict):
+    if actor.get("role", "owner") not in ("owner", "manager"):
+        raise HTTPException(403, "Owner/manager only")
+
+
+@api.patch("/admin/staff/{user_id}/role")
+async def admin_update_role(user_id: str, b: UpdateRoleIn, authorization: Optional[str] = Header(None)):
+    """Update an admin user's role."""
+    me_admin = await _require_admin(authorization)
+    _check_can_manage(me_admin)
+    if b.role not in ("owner", "manager", "cashier", "staff"):
+        raise HTTPException(400, "Invalid role")
+    target = await db.users.find_one({"user_id": user_id, "is_admin": True})
+    if not target:
+        raise HTTPException(404, "Staff not found")
+    # Demoting the last owner is forbidden.
+    if target.get("role", "owner") == "owner" and b.role != "owner":
+        owners = await db.users.count_documents({"is_admin": True, "role": "owner"})
+        if owners <= 1:
+            raise HTTPException(400, "Cannot demote the last owner")
+    await db.users.update_one({"user_id": user_id}, {"$set": {"role": b.role}})
+    return {"ok": True, "user_id": user_id, "role": b.role}
+
+
+@api.patch("/admin/staff/{user_id}/disable")
+async def admin_disable_staff(user_id: str, b: DisableIn, authorization: Optional[str] = Header(None)):
+    """Enable / disable a staff member. Disabled accounts cannot authenticate."""
+    me_admin = await _require_admin(authorization)
+    _check_can_manage(me_admin)
+    if user_id == me_admin["user_id"]:
+        raise HTTPException(400, "Cannot disable yourself")
+    target = await db.users.find_one({"user_id": user_id, "is_admin": True})
+    if not target:
+        raise HTTPException(404, "Staff not found")
+    # Disabling the last active owner is forbidden.
+    if b.disabled and target.get("role", "owner") == "owner":
+        active_owners = await db.users.count_documents({"is_admin": True, "role": "owner", "disabled": {"$ne": True}})
+        if active_owners <= 1:
+            raise HTTPException(400, "Cannot disable the last active owner")
+    await db.users.update_one({"user_id": user_id}, {"$set": {"disabled": bool(b.disabled)}})
+    if b.disabled:
+        await db.user_sessions.delete_many({"user_id": user_id})
+    return {"ok": True, "user_id": user_id, "disabled": bool(b.disabled)}
+
+
+@api.delete("/admin/staff/{user_id}")
+async def admin_delete_staff(user_id: str, authorization: Optional[str] = Header(None)):
+    """Delete an admin/staff account."""
+    me_admin = await _require_admin(authorization)
+    _check_can_manage(me_admin)
+    if user_id == me_admin["user_id"]:
+        raise HTTPException(400, "Cannot delete yourself")
+    target = await db.users.find_one({"user_id": user_id, "is_admin": True})
+    if not target:
+        raise HTTPException(404, "Staff not found")
+    if target.get("role", "owner") == "owner":
+        owners = await db.users.count_documents({"is_admin": True, "role": "owner"})
+        if owners <= 1:
+            raise HTTPException(400, "Cannot delete the last owner")
+    await db.users.delete_one({"user_id": user_id})
+    await db.user_sessions.delete_many({"user_id": user_id})
+    return {"ok": True, "deleted": user_id}
+
+
 @api.get("/admin/dashboard")
-async def admin_dashboard(authorization: Optional[str] = Header(None)):
-    """Aggregated stats for the analytics dashboard."""
+async def admin_dashboard(period: str = "all", authorization: Optional[str] = Header(None)):
+    """Aggregated stats for the analytics dashboard.
+
+    Query param `period` ∈ {today, week, month, all}.
+    Falls back to `all` when value is unknown.
+    """
     await _require_admin(authorization)
     today = now().replace(hour=0, minute=0, second=0, microsecond=0)
     week_ago = today - timedelta(days=7)
     month_ago = today - timedelta(days=30)
 
-    async def pizzas_in_period(start):
-        # Pizzas are tracked per-user. We approximate sales via rewards_history events being insufficient.
-        # For now, sum users' pizza_count where last update happened in period via aggregation on user activity.
-        # Simple proxy: total pizza_count across all customers (excluding admins).
+    period = (period or "all").lower()
+    start = {
+        "today": today,
+        "week": week_ago,
+        "month": month_ago,
+        "all": None,
+    }.get(period)
+    if period not in ("today", "week", "month", "all"):
+        period = "all"
+        start = None
+
+    # Pizzas sold in period (from pizza_events log). Lifetime falls back to summing users.pizza_count.
+    if start is None:
         agg = await db.users.aggregate([
             {"$match": {"is_admin": {"$ne": True}}},
-            {"$group": {"_id": None, "total_pizzas": {"$sum": "$pizza_count"}}},
+            {"$group": {"_id": None, "total": {"$sum": "$pizza_count"}}},
         ]).to_list(1)
-        return agg[0]["total_pizzas"] if agg else 0
+        total_pizzas = int(agg[0]["total"]) if agg else 0
+    else:
+        agg = await db.pizza_events.aggregate([
+            {"$match": {"at": {"$gte": start}}},
+            {"$group": {"_id": None, "total": {"$sum": "$count"}}},
+        ]).to_list(1)
+        total_pizzas = int(agg[0]["total"]) if agg else 0
 
-    total_pizzas = await pizzas_in_period(month_ago)
+    # Reservations (lifetime + per period quick-lookups for context).
     reservations_total = await db.reservations.count_documents({})
     reservations_today = await db.reservations.count_documents({"created_at": {"$gte": today}})
     reservations_week = await db.reservations.count_documents({"created_at": {"$gte": week_ago}})
     reservations_month = await db.reservations.count_documents({"created_at": {"$gte": month_ago}})
+    reservations_period = {
+        "today": reservations_today, "week": reservations_week,
+        "month": reservations_month, "all": reservations_total,
+    }[period]
+
     loyalty_members = await db.users.count_documents({"is_admin": {"$ne": True}, "phone": {"$ne": None}})
     vip_count = await db.users.count_documents({"is_admin": {"$ne": True}, "pizza_count": {"$gte": 10}})
 
-    # Redeemed rewards counts
-    rewards_agg = await db.users.aggregate([
-        {"$match": {"is_admin": {"$ne": True}}},
-        {"$unwind": "$rewards_history"},
-        {"$group": {"_id": "$rewards_history.reward", "count": {"$sum": 1}}},
-    ]).to_list(10)
+    # Redeemed rewards. Period filter uses rewards_history.redeemed_at if available.
+    if start is None:
+        rewards_agg = await db.users.aggregate([
+            {"$match": {"is_admin": {"$ne": True}}},
+            {"$unwind": "$rewards_history"},
+            {"$group": {"_id": "$rewards_history.reward", "count": {"$sum": 1}}},
+        ]).to_list(10)
+    else:
+        rewards_agg = await db.users.aggregate([
+            {"$match": {"is_admin": {"$ne": True}}},
+            {"$unwind": "$rewards_history"},
+            {"$match": {"rewards_history.redeemed_at": {"$gte": start.isoformat()}}},
+            {"$group": {"_id": "$rewards_history.reward", "count": {"$sum": 1}}},
+        ]).to_list(10)
     redeemed = {r["_id"]: r["count"] for r in rewards_agg}
 
-    # Top customers
+    # Top customers (lifetime — most loyal).
     top_customers = await db.users.find(
         {"is_admin": {"$ne": True}}, {"_id": 0, "password": 0}
     ).sort("pizza_count", -1).limit(5).to_list(5)
 
+    # Top pizzas (from pizza_events with a pizza_id, joined with menu names). Period-aware.
+    match_stage = {"pizza_id": {"$ne": None}}
+    if start is not None:
+        match_stage["at"] = {"$gte": start}
+    pizza_agg = await db.pizza_events.aggregate([
+        {"$match": match_stage},
+        {"$group": {"_id": "$pizza_id", "total": {"$sum": "$count"}}},
+        {"$sort": {"total": -1}},
+        {"$limit": 5},
+    ]).to_list(5)
+    top_pizzas = []
+    if pizza_agg:
+        ids = [p["_id"] for p in pizza_agg]
+        menu_rows = await db.menu.find({"id": {"$in": ids}}, {"_id": 0, "id": 1, "name": 1, "image": 1}).to_list(20)
+        name_map = {m["id"]: m for m in menu_rows}
+        for p in pizza_agg:
+            m = name_map.get(p["_id"], {})
+            top_pizzas.append({
+                "pizza_id": p["_id"],
+                "name": m.get("name") or p["_id"],
+                "image": m.get("image"),
+                "count": int(p["total"]),
+            })
+
     return {
+        "period": period,
         "total_pizzas_sold": total_pizzas,
         "loyalty_members": loyalty_members,
         "vip_customers": vip_count,
+        "reservations_in_period": reservations_period,
         "reservations": {
             "today": reservations_today,
             "week": reservations_week,
@@ -527,6 +698,7 @@ async def admin_dashboard(authorization: Optional[str] = Header(None)):
             {"name": c["name"], "phone": c.get("phone"), "pizzas": c.get("pizza_count", 0)}
             for c in top_customers
         ],
+        "top_pizzas": top_pizzas,
     }
 
 

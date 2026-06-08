@@ -47,13 +47,21 @@ export const api = {
   redeem: (reward: string) => req("/loyalty/redeem", { method: "POST", body: JSON.stringify({ reward }) }),
   adminScan: (qr_data: string) => req("/admin/scan", { method: "POST", body: JSON.stringify({ qr_data }) }),
   adminSearch: (query: string) => req("/admin/search", { method: "POST", body: JSON.stringify({ query }) }),
-  adminAddPizza: (user_id: string, qr_token: string, pizza_count: number = 1) =>
-    req("/admin/customer/add-pizza", { method: "POST", body: JSON.stringify({ user_id, qr_token, pizza_count }) }),
+  adminAddPizza: (user_id: string, qr_token: string, pizza_count: number = 1, pizza_id?: string | null) =>
+    req("/admin/customer/add-pizza", { method: "POST", body: JSON.stringify({ user_id, qr_token, pizza_count, pizza_id: pizza_id || null }) }),
   adminRedeem: (user_id: string, qr_token: string, reward: string) =>
     req("/admin/customer/redeem", { method: "POST", body: JSON.stringify({ user_id, qr_token, reward }) }),
-  adminDashboard: () => req("/admin/dashboard"),
+  adminDashboard: (period: "today" | "week" | "month" | "all" = "all") =>
+    req(`/admin/dashboard?period=${period}`),
   adminCreateStaff: (phone: string, name: string, role: string) =>
     req("/admin/staff/create", { method: "POST", body: JSON.stringify({ phone, name, role }) }),
+  adminListStaff: () => req("/admin/staff"),
+  adminUpdateRole: (user_id: string, role: string) =>
+    req(`/admin/staff/${encodeURIComponent(user_id)}/role`, { method: "PATCH", body: JSON.stringify({ role }) }),
+  adminToggleDisabled: (user_id: string, disabled: boolean) =>
+    req(`/admin/staff/${encodeURIComponent(user_id)}/disable`, { method: "PATCH", body: JSON.stringify({ disabled }) }),
+  adminDeleteStaff: (user_id: string) =>
+    req(`/admin/staff/${encodeURIComponent(user_id)}`, { method: "DELETE" }),
 };
 
 export { BASE };

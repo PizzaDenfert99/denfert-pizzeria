@@ -42,6 +42,21 @@ export default function AdminPanel() {
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
+  // Optional pizza selector for popular-pizza analytics
+  const [pizzaMenu, setPizzaMenu] = useState<{ id: string; name: string }[]>([]);
+  const [selectedPizzaId, setSelectedPizzaId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!user || !user.is_admin) return;
+    (async () => {
+      try {
+        const items = await api.menu();
+        const onlyPizzas = (items || []).filter((m: any) => m.category === "pizzas").map((m: any) => ({ id: m.id, name: m.name }));
+        setPizzaMenu(onlyPizzas);
+      } catch {}
+    })();
+  }, [user]);
+
   const showToast = (msg: string) => {
     setToast(msg);
     setTimeout(() => setToast(null), 2500);
@@ -125,7 +140,7 @@ export default function AdminPanel() {
     setBusy(true);
     setError(null);
     try {
-      const c = await api.adminAddPizza(customer.user_id, customer.qr_token || "", n);
+      const c = await api.adminAddPizza(customer.user_id, customer.qr_token || "", n, selectedPizzaId);
       setCustomer(c);
       showToast(`+${n} ${lang === "fr" ? "pizza" + (n > 1 ? "s" : "") + " ajoutée" + (n > 1 ? "s" : "") : "pizza" + (n > 1 ? "s" : "") + " added"}`);
     } catch {
@@ -371,6 +386,34 @@ export default function AdminPanel() {
                 <LinearGradient colors={["#1A1410", "#0A0805"]} style={StyleSheet.absoluteFillObject} />
                 <Text style={styles.countLbl}>{lang === "fr" ? "PIZZAS ACHETÉES" : "PIZZAS PURCHASED"}</Text>
                 <Text style={styles.countBig}>{customer.pizza_count}</Text>
+
+                {pizzaMenu.length > 0 && (
+                  <View style={{ width: "100%", marginTop: 8 }}>
+                    <Text style={styles.pickerLbl}>
+                      {lang === "fr" ? "PIZZA (OPTIONNEL · POUR STATS)" : "PIZZA (OPTIONAL · FOR STATS)"}
+                    </Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 6, paddingVertical: 6 }}>
+                      <Pressable
+                        testID="pizza-pick-none"
+                        onPress={() => setSelectedPizzaId(null)}
+                        style={[styles.pizzaChip, !selectedPizzaId && styles.pizzaChipActive]}
+                      >
+                        <Text style={[styles.pizzaChipTxt, !selectedPizzaId && styles.pizzaChipTxtActive]}>{lang === "fr" ? "—" : "—"}</Text>
+                      </Pressable>
+                      {pizzaMenu.map((p) => (
+                        <Pressable
+                          key={p.id}
+                          testID={`pizza-pick-${p.id}`}
+                          onPress={() => setSelectedPizzaId(p.id)}
+                          style={[styles.pizzaChip, selectedPizzaId === p.id && styles.pizzaChipActive]}
+                        >
+                          <Text style={[styles.pizzaChipTxt, selectedPizzaId === p.id && styles.pizzaChipTxtActive]}>{p.name}</Text>
+                        </Pressable>
+                      ))}
+                    </ScrollView>
+                  </View>
+                )}
+
                 <View style={styles.qtyRow}>
                   {[1, 2, 3, 4, 5].map((n) => (
                     <Pressable
@@ -497,6 +540,11 @@ const styles = StyleSheet.create({
   qtyRow: { flexDirection: "row", gap: 6, marginTop: theme.space.md, width: "100%" },
   qtyBtn: { flex: 1, height: 48, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(212,175,55,0.1)" },
   qtyTxt: { color: theme.color.brand, fontSize: 16, fontWeight: "700" },
+  pickerLbl: { color: theme.color.onSurfaceTertiary, fontSize: 9, letterSpacing: 1.5, fontWeight: "700", marginBottom: 2 },
+  pizzaChip: { paddingHorizontal: 12, height: 32, borderRadius: 999, borderWidth: 1, borderColor: theme.color.border, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.04)" },
+  pizzaChipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
+  pizzaChipTxt: { color: theme.color.onSurfaceTertiary, fontSize: 11, fontWeight: "600" },
+  pizzaChipTxtActive: { color: theme.color.onBrandPrimary },
   secondaryBtn: { flex: 1, flexDirection: "row", gap: 8, alignItems: "center", justifyContent: "center", paddingVertical: 14, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surfaceSecondary },
   secondaryTxt: { color: theme.color.brand, fontSize: 12, fontWeight: "600", letterSpacing: 0.8 },
   searchRow: { flexDirection: "row", alignItems: "center", gap: 12, padding: 12, borderRadius: theme.radius.md, backgroundColor: theme.color.surfaceSecondary, borderWidth: 1, borderColor: theme.color.border, marginBottom: 8 },

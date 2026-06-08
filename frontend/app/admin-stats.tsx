@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable, RefreshControl } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -9,19 +10,30 @@ import { useI18n } from "@/src/i18n";
 import { api } from "@/src/api";
 import { theme } from "@/src/theme";
 
+type Period = "today" | "week" | "month" | "all";
+
 export default function AdminStats() {
   const router = useRouter();
   const { user, loading } = useAuth();
   const { lang } = useI18n();
+
+  const [period, setPeriod] = useState<Period>("all");
   const [data, setData] = useState<any>(null);
   const [fetching, setFetching] = useState(true);
   const [err, setErr] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const load = useCallback(async () => {
+  const periodLabel: Record<Period, { fr: string; en: string }> = {
+    today: { fr: "Aujourd'hui", en: "Today" },
+    week: { fr: "7 jours", en: "7 days" },
+    month: { fr: "30 jours", en: "30 days" },
+    all: { fr: "Tout", en: "Lifetime" },
+  };
+
+  const load = useCallback(async (p: Period) => {
     try {
       setErr(null);
-      const d = await api.adminDashboard();
+      const d = await api.adminDashboard(p);
       setData(d);
     } catch (e: any) {
       setErr(e?.message?.includes("403") ? (lang === "fr" ? "Accès refusé" : "Access denied") : (lang === "fr" ? "Erreur de chargement" : "Failed to load"));
@@ -31,7 +43,7 @@ export default function AdminStats() {
     }
   }, [lang]);
 
-  useEffect(() => { if (user && user.is_admin) load(); }, [user, load]);
+  useEffect(() => { if (user && user.is_admin) { setFetching(true); load(period); } }, [user, period, load]);
 
   if (loading || (fetching && !data)) {
     return <View style={styles.container}><ActivityIndicator color={theme.color.brand} style={{ flex: 1 }} /></View>;
@@ -67,9 +79,25 @@ export default function AdminStats() {
           <View style={{ width: 40 }} />
         </View>
 
+        {/* Period selector */}
+        <View style={styles.periodRow}>
+          {(["today", "week", "month", "all"] as Period[]).map((p) => (
+            <Pressable
+              key={p}
+              testID={`period-${p}`}
+              onPress={() => setPeriod(p)}
+              style={[styles.periodChip, period === p && styles.periodChipActive]}
+            >
+              <Text style={[styles.periodTxt, period === p && styles.periodTxtActive]}>
+                {lang === "fr" ? periodLabel[p].fr : periodLabel[p].en}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+
         <ScrollView
           contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 80 }}
-          refreshControl={<RefreshControl refreshing={refreshing} tintColor={theme.color.brand} onRefresh={async () => { setRefreshing(true); await load(); }} />}
+          refreshControl={<RefreshControl refreshing={refreshing} tintColor={theme.color.brand} onRefresh={async () => { setRefreshing(true); await load(period); }} />}
         >
           {err && <View style={styles.errBox}><Feather name="alert-circle" size={14} color={theme.color.error} /><Text style={styles.errTxt}>{err}</Text></View>}
 
@@ -78,9 +106,11 @@ export default function AdminStats() {
               {/* HERO KPI */}
               <View style={styles.heroCard}>
                 <LinearGradient colors={["#1A1410", "#0A0805"]} style={StyleSheet.absoluteFillObject} />
-                <Text style={styles.heroLbl}>{lang === "fr" ? "PIZZAS TOTALES" : "TOTAL PIZZAS"}</Text>
+                <Text style={styles.heroLbl}>{lang === "fr" ? "PIZZAS VENDUES" : "PIZZAS SOLD"}</Text>
                 <Text style={styles.heroBig}>{data.total_pizzas_sold}</Text>
-                <Text style={styles.heroSub}>{lang === "fr" ? "Comptabilisées dans la fidélité" : "Counted in loyalty"}</Text>
+                <Text style={styles.heroSub}>
+                  {lang === "fr" ? `Période · ${periodLabel[period].fr}` : `Period · ${periodLabel[period].en}`}
+                </Text>
               </View>
 
               {/* KPI ROW */}
@@ -99,6 +129,12 @@ export default function AdminStats() {
 
               {/* RESERVATIONS */}
               <Text style={styles.sectionLbl}>{lang === "fr" ? "RÉSERVATIONS" : "RESERVATIONS"}</Text>
+              <View style={styles.reservationHero}>
+                <Text style={styles.reservationBig}>{data.reservations_in_period ?? data.reservations.total}</Text>
+                <Text style={styles.reservationSub}>
+                  {lang === "fr" ? `réservation(s) · ${periodLabel[period].fr.toLowerCase()}` : `reservations · ${periodLabel[period].en.toLowerCase()}`}
+                </Text>
+              </View>
               <View style={styles.kpiRow}>
                 <View style={styles.smallKpi}>
                   <Text style={styles.smallKpiBig}>{data.reservations.today}</Text>
@@ -136,6 +172,37 @@ export default function AdminStats() {
                 </View>
               </View>
 
+              {/* TOP PIZZAS */}
+              <Text style={styles.sectionLbl}>{lang === "fr" ? "PIZZAS LES PLUS POPULAIRES" : "MOST POPULAR PIZZAS"}</Text>
+              {(!data.top_pizzas || data.top_pizzas.length === 0) ? (
+                <View style={styles.hintBox}>
+                  <Feather name="info" size={13} color={theme.color.brand} />
+                  <Text style={styles.hintTxt}>
+                    {lang === "fr"
+                      ? "Sélectionnez la pizza dans le panneau client pour activer ce classement."
+                      : "Pick the pizza in the customer panel to populate this ranking."}
+                  </Text>
+                </View>
+              ) : (
+                data.top_pizzas.map((p: any, i: number) => (
+                  <View key={p.pizza_id} style={styles.pizzaRow}>
+                    <View style={[styles.rank, i === 0 && styles.rankGold]}><Text style={[styles.rankTxt, i === 0 && styles.rankGoldTxt]}>{i + 1}</Text></View>
+                    {p.image ? (
+                      <Image source={p.image} style={styles.pizzaImg} contentFit="cover" />
+                    ) : (
+                      <View style={[styles.pizzaImg, { alignItems: "center", justifyContent: "center", backgroundColor: theme.color.surfaceSecondary }]}>
+                        <Feather name="image" size={16} color={theme.color.muted} />
+                      </View>
+                    )}
+                    <View style={{ flex: 1 }}>
+                      <Text style={styles.pizzaName}>{p.name}</Text>
+                      <Text style={styles.pizzaSub}>{lang === "fr" ? `${p.count} pizzas` : `${p.count} pizzas`}</Text>
+                    </View>
+                    <Text style={styles.pizzaCount}>{p.count}</Text>
+                  </View>
+                ))
+              )}
+
               {/* TOP CUSTOMERS */}
               <Text style={styles.sectionLbl}>{lang === "fr" ? "TOP CLIENTS" : "TOP CUSTOMERS"}</Text>
               {data.top_customers.length === 0 ? (
@@ -168,6 +235,13 @@ const styles = StyleSheet.create({
   title: { color: theme.color.onSurface, fontSize: 14, fontWeight: "500", textAlign: "center", marginTop: 2 },
   btn: { paddingHorizontal: 20, height: 44, borderRadius: theme.radius.md, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
   btnTxt: { color: theme.color.onBrandPrimary, fontWeight: "700", letterSpacing: 1, fontSize: 13 },
+
+  periodRow: { flexDirection: "row", gap: 6, paddingHorizontal: theme.space.lg, paddingTop: theme.space.md, paddingBottom: theme.space.sm },
+  periodChip: { flex: 1, height: 34, borderRadius: 999, borderWidth: 1, borderColor: theme.color.border, alignItems: "center", justifyContent: "center" },
+  periodChipActive: { backgroundColor: "rgba(212,175,55,0.12)", borderColor: theme.color.brand },
+  periodTxt: { color: theme.color.onSurfaceTertiary, fontSize: 11, fontWeight: "600" },
+  periodTxtActive: { color: theme.color.brand },
+
   heroCard: { padding: theme.space.xl, borderRadius: theme.radius.lg, borderWidth: 1, borderColor: "rgba(212,175,55,0.4)", overflow: "hidden", alignItems: "center", marginBottom: theme.space.lg },
   heroLbl: { color: theme.color.brand, fontSize: 10, letterSpacing: 2.5, fontWeight: "700" },
   heroBig: { color: theme.color.brand, fontSize: 64, fontWeight: "300", lineHeight: 70, marginVertical: 4 },
@@ -180,11 +254,26 @@ const styles = StyleSheet.create({
   smallKpiBig: { color: theme.color.brand, fontSize: 22, fontWeight: "600" },
   smallKpiLbl: { color: theme.color.onSurfaceTertiary, fontSize: 10, marginTop: 2, textAlign: "center" },
   sectionLbl: { color: theme.color.brand, fontSize: 10, letterSpacing: 2.5, fontWeight: "700", marginBottom: theme.space.md, marginTop: theme.space.md },
+
+  reservationHero: { padding: theme.space.lg, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand, backgroundColor: "rgba(212,175,55,0.06)", alignItems: "center", marginBottom: theme.space.md },
+  reservationBig: { color: theme.color.brand, fontSize: 36, fontWeight: "300" },
+  reservationSub: { color: theme.color.onSurfaceTertiary, fontSize: 12, marginTop: 2 },
+
   rewardsList: { padding: theme.space.lg, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surfaceSecondary, marginBottom: theme.space.lg },
   rewardRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 10, borderBottomWidth: 0.5, borderBottomColor: theme.color.divider },
   rewardIcon: { width: 32, height: 32, borderRadius: 16, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
   rewardName: { flex: 1, color: theme.color.onSurface, fontSize: 13 },
   rewardCount: { color: theme.color.onSurface, fontSize: 16, fontWeight: "600" },
+
+  hintBox: { flexDirection: "row", alignItems: "flex-start", gap: 8, padding: 12, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surfaceSecondary },
+  hintTxt: { flex: 1, color: theme.color.onSurfaceTertiary, fontSize: 12, lineHeight: 16 },
+
+  pizzaRow: { flexDirection: "row", alignItems: "center", gap: 12, padding: 10, borderRadius: theme.radius.md, backgroundColor: theme.color.surfaceSecondary, borderWidth: 1, borderColor: theme.color.border, marginBottom: 8 },
+  pizzaImg: { width: 46, height: 46, borderRadius: 23 },
+  pizzaName: { color: theme.color.onSurface, fontSize: 14, fontWeight: "500" },
+  pizzaSub: { color: theme.color.onSurfaceTertiary, fontSize: 11, marginTop: 2 },
+  pizzaCount: { color: theme.color.brand, fontSize: 18, fontWeight: "600" },
+
   customerRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 12, borderBottomWidth: 0.5, borderBottomColor: theme.color.divider },
   rank: { width: 28, height: 28, borderRadius: 14, borderWidth: 1, borderColor: theme.color.border, alignItems: "center", justifyContent: "center" },
   rankGold: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
