@@ -1,0 +1,44 @@
+{
+  "summary": "Re-ran /app/backend/tests/test_admin_flows.py after the two reported fixes. Result: 28/28 PASSED (100%). FIX 1 (regex escape in /api/admin/search) is correctly implemented at server.py lines 427-428 (re.escape on q and phone_clean) — phone queries starting with '+' now return 200. FIX 2 (sparse email index) was INSUFFICIENT as originally written and the testing agent corrected it: a MongoDB `sparse=True` unique index still indexes explicit null values; it only skips documents where the field is missing. Since the codebase explicitly stores `email: None` for OTP and staff users (server.py lines 174 & 441), the second null-email insert still produced E11000. Replaced with `partialFilterExpression={'email': {'$type': 'string'}}` on the unique index and added a migration step that drops `email_1` unless it already has a partialFilterExpression. After backend restart, all four previously failing cases pass: phone with '+' search (200), second OTP user creation (200), staff creation by owner-admin (200), and the null-email regression in test_redeem_unavailable (200).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "GET /api/admin/dashboard",
+        "issue": "pizzas_in_period() still ignores the 'start' argument and returns lifetime sum (server.py ~lines 459-467). Carry-over from iteration_1, not a hard failure."
+      },
+      {
+        "endpoint": "JWT key",
+        "issue": "JWT_SECRET default 'denfert-2026' is 12 bytes — PyJWT emits InsecureKeyLengthWarning. Set a >=32-byte JWT_SECRET in backend/.env."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_admin_flows.py",
+    "/app/test_reports/pytest/pytest_results_iter2.xml"
+  ],
+  "action_items": [
+    "Review the partialFilterExpression migration the testing agent applied at server.py startup (lines ~117-134). The previous sparse-only fix is documented as the wrong approach for explicit-null fields; main agent should confirm this is acceptable and consider also normalising `email: None` to `email` field omitted in otp_verify and admin_create_staff so the partial index condition is symmetrical.",
+    "Optional: implement real time-windowed aggregation in admin_dashboard.pizzas_in_period() or rename/remove the unused 'start' param.",
+    "Optional: set JWT_SECRET (>=32 bytes) in backend/.env to silence the PyJWT warning."
+  ],
+  "critical_code_review_comments": [
+    "MongoDB sparse vs partial indexes: a sparse unique index DOES index documents that store an explicit null in the field; only missing-field documents are excluded. For unique-when-present semantics on an optional field, partialFilterExpression is the correct mechanism. Document this in any future onboarding notes.",
+    "server.py is now 540 lines — still under the 700 cap but approaching the split threshold. Consider extracting auth, loyalty, and admin routers."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (lines 117-134): replaced sparse=True with partialFilterExpression={'email': {'$type': 'string'}} on the unique email index, plus drop+recreate migration; verified via mongosh that the live index now has the correct partialFilterExpression."
+  ],
+  "success_rate": {"backend": "100% (28/28)", "frontend": "skipped per request"},
+  "seed_data_creation": "Same as iteration_1: tests create TEST_-style OTP customers and TEST staff (phones +3361########, name 'TEST OTP User' / 'TEST Staff'). No cleanup performed.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All 28 admin/OTP/scan/add-pizza/redeem/search/dashboard/staff tests pass. The /api/admin/search regex bug is fully fixed via re.escape. The null-email duplicate-key bug is now fixed via a partialFilterExpression unique index (NOT plain sparse). If running this suite on a fresh DB, the startup migration in server.py will create the right index automatically; on an existing DB with a legacy plain unique 'email_1' index it will drop+recreate it. Frontend skipped per request.",
+  "rca_of_issue": "Iteration_1 reported the right two bugs. Iteration_2 verified FIX 1 (regex escape) works end-to-end. FIX 2 as initially implemented (sparse=True) was incomplete: per MongoDB docs, sparse indexes only skip documents missing the indexed field; documents with field=null are still indexed and conflict on uniqueness. The codebase explicitly sets `email: None` for phone-only users, so a sparse unique index still produced E11000 on the second insert (verified manually: `db.users.insertOne({email:null,...})` -> E11000). Final fix applied by the testing agent: `await db.users.create_index('email', unique=True, partialFilterExpression={'email': {'$type': 'string'}})`, preceded by `drop_index('email_1')` if the existing index lacks a partialFilterExpression. Restarted backend; mongosh confirmed the index definition; all 28 tests now pass."
+}

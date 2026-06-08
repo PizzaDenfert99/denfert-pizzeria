@@ -2,7 +2,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Header
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, logging, uuid, secrets
+import os, logging, uuid, secrets, re
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional
@@ -116,8 +116,25 @@ SEED = [
 
 @app.on_event("startup")
 async def startup():
-    await db.users.create_index("email", unique=True)
+    # Ensure email index is partial so multiple users with email=None / missing are allowed (phone-only OTP users).
+    # NOTE: a plain `sparse` index still indexes explicit null values; only documents missing the field are
+    # skipped. We need a partialFilterExpression to actually exclude null/non-string emails.
+    try:
+        existing = await db.users.index_information()
+        if "email_1" in existing:
+            opts = existing["email_1"]
+            has_partial = "partialFilterExpression" in opts
+            if not has_partial:
+                await db.users.drop_index("email_1")
+    except Exception as _e:
+        log.warning(f"index check failed: {_e}")
+    await db.users.create_index(
+        "email",
+        unique=True,
+        partialFilterExpression={"email": {"$type": "string"}},
+    )
     await db.users.create_index("user_id", unique=True)
+    await db.users.create_index("phone", sparse=True)
     await db.user_sessions.create_index("session_token", unique=True)
     # Always replace menu on startup to reflect updates
     await db.menu.delete_many({})
@@ -415,12 +432,15 @@ async def admin_search(b: AdminSearchIn, authorization: Optional[str] = Header(N
         return []
     # Try exact phone first
     phone_clean = q.replace(" ", "")
+    # Escape user input before injecting into MongoDB $regex to avoid invalid-regex errors.
+    safe_name = re.escape(q)
+    safe_phone = re.escape(phone_clean)
     users = await db.users.find(
         {"$or": [
             {"phone": phone_clean},
             {"email": q.lower()},
-            {"name": {"$regex": q, "$options": "i"}},
-            {"phone": {"$regex": phone_clean, "$options": "i"}},
+            {"name": {"$regex": safe_name, "$options": "i"}},
+            {"phone": {"$regex": safe_phone, "$options": "i"}},
         ], "is_admin": {"$ne": True}},
         {"_id": 0, "password": 0},
     ).limit(20).to_list(20)
