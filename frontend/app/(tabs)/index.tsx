@@ -8,7 +8,7 @@ import { useRouter } from "expo-router";
 import { theme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 
-const HERO_URI = "https://images.unsplash.com/photo-1593504049359-74330189a345?auto=format&fit=crop&w=1400&q=80";
+const HERO_URI = "https://images.unsplash.com/photo-1571997478779-2adcbbe9ab2f?auto=format&fit=crop&w=1400&q=85";
 const RESTAURANT = "https://images.pexels.com/photos/4997894/pexels-photo-4997894.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=900&w=1200";
 const LOGO_URI = "https://customer-assets.emergentagent.com/job_denfert-pizzeria/artifacts/nwj3edom_file_00000000005c71f489c484606f9b5e35.png";
 const LOGO_NATIVE = require("@/assets/images/logo.png");
@@ -52,8 +52,8 @@ export default function Home() {
               </Pressable>
             </View>
             <Pressable testID="hero-menu-btn" onPress={() => router.push("/(tabs)/menu")} style={styles.heroCenter}>
-              <Text style={styles.heroTitle} numberOfLines={1} adjustsFontSizeToFit>Pizza</Text>
-              <Text style={[styles.heroTitle, { marginTop: -8 }]} numberOfLines={1} adjustsFontSizeToFit>Denfert</Text>
+              <Text style={styles.heroTitle}>Pizza</Text>
+              <Text style={[styles.heroTitle, { marginTop: -10 }]}>Denfert</Text>
               <Text style={styles.heroTag}>{t("tagline")}</Text>
               <View style={styles.dividerRow}>
                 <View style={styles.dividerLine} />
@@ -117,7 +117,7 @@ const styles = StyleSheet.create({
   langBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, height: 36, borderRadius: 999, borderWidth: 1, borderColor: "rgba(212,175,55,0.55)", backgroundColor: "rgba(0,0,0,0.5)", marginTop: 16 },
   langTxt: { color: theme.color.brand, fontSize: 12, fontWeight: "700", letterSpacing: 1 },
   heroCenter: { alignItems: "center", paddingHorizontal: theme.space.md, marginTop: 8 },
-  heroTitle: { color: "#F5F1E8", fontSize: 88, lineHeight: 96, fontWeight: "500", letterSpacing: -2, textAlign: "center", fontFamily: Platform.select({ ios: "Georgia", android: "serif", default: "Georgia, 'Times New Roman', serif" }) },
+  heroTitle: { color: "#F5F1E8", fontSize: 76, lineHeight: 80, fontWeight: "500", letterSpacing: -1.5, textAlign: "center", fontFamily: Platform.select({ ios: "Georgia", android: "serif", default: "Georgia, 'Times New Roman', serif" }) },
   heroTag: { color: theme.color.brand, fontSize: 17, marginTop: 16, fontStyle: "italic", textAlign: "center", letterSpacing: 0.2 },
   dividerRow: { flexDirection: "row", alignItems: "center", marginTop: 18, paddingHorizontal: theme.space.md, gap: 14 },
   dividerLine: { flex: 1, height: 1, backgroundColor: theme.color.brand, opacity: 0.7 },
