@@ -1,0 +1,62 @@
+{
+  "summary": "Backend tested for admin panel + OTP customer flow. 24/28 pytest tests passed (85.7%). Two real backend bugs surfaced: (1) /api/admin/search returns HTTP 500 when query contains regex metacharacters (e.g. '+' in phone '+3361...') because backend passes user input directly into MongoDB $regex without escaping → OperationFailure 'Regular expression is invalid'. (2) Both POST /api/auth/otp/verify (when creating any second OTP-created user) and POST /api/admin/staff/create return HTTP 500 because the email field is set to None and the startup index db.users.create_index('email', unique=True) is NOT sparse/partial, so second insertion with email:null raises DuplicateKeyError. All OTP/auth, scan, add-pizza tier logic (3/5/10 → coffee/dessert/margherita), redeem, dashboard shape, and admin-only access controls work correctly. Default admin can call /api/admin/staff/create (no 403 — the role-gate at line 434 correctly defaults to 'owner') — staff-create gate is fine; the only blocker on that endpoint is the dup-key bug.",
+  "backend_issues": {
+    "critical": [
+      {
+        "endpoint": "POST /api/admin/search",
+        "issue": "Unescaped user input used in MongoDB $regex. Searching by phone '+33612345678' fails: pymongo.errors.OperationFailure 'Regular expression is invalid: quantifier does not follow a repeatable item'. The '+' is treated as a regex quantifier. Fix: re.escape(phone_clean) and re.escape(q) before using in $regex (server.py lines 422-423).",
+        "priority": "HIGH"
+      },
+      {
+        "endpoint": "POST /api/auth/otp/verify  &  POST /api/admin/staff/create",
+        "issue": "Both endpoints insert users with email=None. db.users.create_index('email', unique=True) at startup (server.py line 119) is a plain unique index, NOT sparse/partial. Second insertion of any null-email user raises pymongo.errors.DuplicateKeyError E11000 'dup key: { email: null }' → 500. Fix: replace with `await db.users.create_index('email', unique=True, sparse=True)` or use partialFilterExpression {email: {$type: 'string'}}. Existing indexes must be dropped first (db.users.drop_index('email_1')).",
+        "priority": "CRITICAL"
+      }
+    ],
+    "minor": [
+      {
+        "endpoint": "GET /api/admin/dashboard",
+        "issue": "pizzas_in_period() ignores its 'start' argument and always returns the lifetime sum across all users (server.py lines 459-467). The name implies a time window. Not a hard failure but misleading and prevents real per-period analytics."
+      },
+      {
+        "endpoint": "JWT key",
+        "issue": "JWT_SECRET default value 'denfert-2026' is 12 bytes — below PyJWT-recommended 32 bytes. Warning logged at every encode/decode. Set a stronger JWT_SECRET in backend/.env."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Admin customer search (admin.tsx)", "issue": "Will surface a 500 to staff whenever they search for a phone that starts with '+'. Caused by backend regex bug above.", "affected_testIDs": ["admin-search-input"]},
+      {"flow": "Admin create staff (admin-staff.tsx)", "issue": "Creating any second staff member fails with 500 because of the email null-dup-key index bug.", "affected_testIDs": ["staff-create-submit"]}
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_admin_flows.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Fix /api/admin/search: re.escape() the user query before inserting into $regex. Without this, any phone with '+' or any name with regex metacharacters crashes the endpoint.",
+    "Fix users.email unique index: change to sparse/partial so multiple users with email=None can coexist. Migration needed: drop existing 'email_1' index in MongoDB before recreating as sparse.",
+    "Optional: implement real time-windowed aggregation in admin_dashboard.pizzas_in_period() or remove the unused 'start' arg / rename the function.",
+    "Optional: set a strong JWT_SECRET (>=32 bytes) in backend/.env to silence InsecureKeyLengthWarning."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 521 lines — still under the 700 cap but adding more endpoints will push it over; consider splitting into routers (auth, loyalty, admin) before next feature batch.",
+    "admin_search builds $regex from raw input — classic ReDoS/injection vector in addition to the current crash. Escape and clamp length.",
+    "Mongo indexes on optional fields (email) must always be sparse or partial when the field can be null.",
+    "pizzas_in_period() takes a 'start' parameter it never uses — dead code path; either implement or drop.",
+    "_compute_available calculates earned via integer division on pizza_count; works but means once a user is at 30 pizzas they accumulate 10 unredeemed coffees. Worth confirming this is desired product behaviour."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_admin_flows.py (new — 28 pytest tests covering OTP, admin scan, add-pizza tiers, redeem, search, dashboard, staff creation)"
+  ],
+  "success_rate": {"backend": "85.7% (24/28)", "frontend": "not tested per request"},
+  "seed_data_creation": "Tests create TEST_-style customers (phone +3361########, name 'TEST OTP User') and TEST staff phones via OTP and /admin/staff/create. No cleanup performed — recommend periodic prune of users whose name starts with 'TEST' if running this suite often.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Re-run `pytest /app/backend/tests/test_admin_flows.py -v` after the two fixes (regex escape + sparse email index). Expect 28/28 pass. If MongoDB still has the old 'email_1' unique non-sparse index, the otp_verify dup-key 500 will persist — the index must be dropped manually (db.users.drop_index('email_1')) or via a startup migration before the new sparse index is created. Frontend test was intentionally skipped (QR scanner is native-only and the UI was already statically audited).",
+  "rca_of_issue": "Bug A (regex 500): server.py admin_search() at line 418-426 inserts `phone_clean` and `q` directly into {'$regex': ...}. When the customer phone is '+33612345678', the leading '+' becomes a regex quantifier without a preceding repeatable item → MongoDB throws OperationFailure 51091 → unhandled → 500. Reproduction: as admin, POST /api/admin/search {\"query\":\"+33612345678\"}. Fix: `import re; q_re = re.escape(q); phone_re = re.escape(phone_clean)` then use those in the $regex documents. Bug B (email dup-key 500): server.py startup line 119 creates a plain unique index on `email`. OTP-verified customers (line 174) and staff (line 441) both store `email: None`. MongoDB's unique index treats nulls as comparable; the second null-email document violates uniqueness → DuplicateKeyError → 500. Reproduction: create two new customers via OTP flow back-to-back, or call /api/admin/staff/create twice. Fix: change index to `await db.users.create_index('email', unique=True, sparse=True)` and drop the existing index in the running DB."
+}

@@ -34,12 +34,35 @@ class LogIn(BaseModel):
     email: EmailStr; password: str
 class GSession(BaseModel):
     session_id: str
+class OtpRequestIn(BaseModel):
+    phone: str
+    name: Optional[str] = None
+class OtpVerifyIn(BaseModel):
+    phone: str
+    code: str
+    name: Optional[str] = None
 class ResIn(BaseModel):
     date: str; time: str; guests: int; name: str; phone: str; notes: Optional[str] = None
 class PurchaseIn(BaseModel):
     pizza_count: int = 1  # admin records pizza purchase for loyalty
 class RedeemIn(BaseModel):
     reward: str  # "coffee" | "dessert" | "margherita"
+class ScanIn(BaseModel):
+    qr_data: str  # PIZZA-DENFERT:{user_id}:{qr_token}
+class AdminPizzaIn(BaseModel):
+    user_id: str
+    qr_token: str
+    pizza_count: int = 1
+class AdminRedeemIn(BaseModel):
+    user_id: str
+    qr_token: str
+    reward: str
+class AdminSearchIn(BaseModel):
+    query: str  # phone or name
+class CreateStaffIn(BaseModel):
+    phone: str
+    name: str
+    role: str = "staff"  # owner | manager | cashier | staff
 
 async def cu(authorization: Optional[str] = Header(None)) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
@@ -111,6 +134,53 @@ async def startup():
         })
 
 # Auth
+@api.post("/auth/otp/request")
+async def otp_request(b: OtpRequestIn):
+    """Generate a 6-digit OTP for the phone. DEV MODE: returns the code in response."""
+    phone = b.phone.strip().replace(" ", "")
+    if len(phone) < 6:
+        raise HTTPException(400, "Invalid phone")
+    code = f"{secrets.randbelow(900000) + 100000}"
+    await db.otp_codes.update_one(
+        {"phone": phone},
+        {"$set": {"phone": phone, "code": code, "expires_at": now() + timedelta(minutes=10), "created_at": now()}},
+        upsert=True,
+    )
+    log.info(f"OTP for {phone}: {code}")
+    # In production with Twilio, send SMS here. For now, return code in dev_code field.
+    return {"ok": True, "phone": phone, "dev_code": code, "expires_in": 600}
+
+
+@api.post("/auth/otp/verify")
+async def otp_verify(b: OtpVerifyIn):
+    """Verify OTP, login existing user or create new account."""
+    phone = b.phone.strip().replace(" ", "")
+    rec = await db.otp_codes.find_one({"phone": phone}, {"_id": 0})
+    if not rec:
+        raise HTTPException(400, "No code requested for this phone")
+    exp = rec.get("expires_at")
+    if exp and exp.tzinfo is None: exp = exp.replace(tzinfo=timezone.utc)
+    if exp < now():
+        raise HTTPException(400, "Code expired")
+    if rec["code"] != b.code.strip():
+        raise HTTPException(401, "Invalid code")
+    await db.otp_codes.delete_one({"phone": phone})
+
+    user = await db.users.find_one({"phone": phone})
+    if not user:
+        uid = "user_" + secrets.token_hex(6)
+        user = {
+            "user_id": uid, "phone": phone, "name": (b.name or phone),
+            "email": None, "is_admin": False, "pizza_count": 0,
+            "qr_token": secrets.token_hex(12),
+            "rewards_redeemed": [], "rewards_history": [],
+            "created_at": now(),
+        }
+        await db.users.insert_one(user)
+    user.pop("_id", None); user.pop("password", None)
+    return {"token": mkjwt(user["user_id"]), "user": user}
+
+
 @api.post("/auth/register")
 async def register(b: RegIn):
     if await db.users.find_one({"email": b.email.lower()}):
@@ -232,13 +302,94 @@ async def loyalty_me(authorization: Optional[str] = Header(None)):
 
 @api.post("/loyalty/add-purchase")
 async def add_purchase(b: PurchaseIn, authorization: Optional[str] = Header(None)):
-    """Self-service demo endpoint to simulate pizza purchase (in production: admin scans QR)."""
+    """ADMIN ONLY: increment pizza count for self (deprecated for customer use)."""
     u = await cu(authorization)
+    if not u.get("is_admin"):
+        raise HTTPException(403, "Admin only")
     if b.pizza_count < 1 or b.pizza_count > 10:
         raise HTTPException(400, "invalid count")
     await db.users.update_one({"user_id": u["user_id"]}, {"$inc": {"pizza_count": b.pizza_count}})
     nu = await db.users.find_one({"user_id": u["user_id"]}, {"_id": 0, "password": 0})
     return {"pizza_count": nu.get("pizza_count", 0)}
+
+
+async def _require_admin(authorization: Optional[str] = Header(None)) -> dict:
+    u = await cu(authorization)
+    if not u.get("is_admin"):
+        raise HTTPException(403, "Admin only")
+    return u
+
+
+def _parse_qr(qr_data: str) -> tuple:
+    """Parse PIZZA-DENFERT:{user_id}:{qr_token} -> (user_id, qr_token) or raise."""
+    parts = qr_data.strip().split(":")
+    if len(parts) != 3 or parts[0] != "PIZZA-DENFERT":
+        raise HTTPException(400, "Invalid QR code")
+    return parts[1], parts[2]
+
+
+def _customer_payload(u: dict) -> dict:
+    pc = u.get("pizza_count", 0)
+    redeemed = u.get("rewards_redeemed", [])
+    return {
+        "user_id": u["user_id"],
+        "qr_token": u.get("qr_token"),
+        "name": u.get("name"),
+        "email": u.get("email"),
+        "pizza_count": pc,
+        "available_rewards": _compute_available(pc, redeemed),
+        "history": u.get("rewards_history", []),
+        "thresholds": REWARD_THRESHOLDS,
+        "next_coffee": (REWARD_THRESHOLDS["coffee"] - pc % REWARD_THRESHOLDS["coffee"]) % REWARD_THRESHOLDS["coffee"] or 0,
+        "next_dessert": (REWARD_THRESHOLDS["dessert"] - pc % REWARD_THRESHOLDS["dessert"]) % REWARD_THRESHOLDS["dessert"] or 0,
+        "next_margherita": (REWARD_THRESHOLDS["margherita"] - pc % REWARD_THRESHOLDS["margherita"]) % REWARD_THRESHOLDS["margherita"] or 0,
+    }
+
+
+@api.post("/admin/scan")
+async def admin_scan(b: ScanIn, authorization: Optional[str] = Header(None)):
+    """Admin scans customer QR code → returns customer + loyalty progress."""
+    await _require_admin(authorization)
+    user_id, qr_token = _parse_qr(b.qr_data)
+    user = await db.users.find_one({"user_id": user_id, "qr_token": qr_token}, {"_id": 0, "password": 0})
+    if not user:
+        raise HTTPException(404, "Customer not found or QR invalid")
+    return _customer_payload(user)
+
+
+@api.post("/admin/customer/add-pizza")
+async def admin_add_pizza(b: AdminPizzaIn, authorization: Optional[str] = Header(None)):
+    """Admin adds pizza(s) to a customer's loyalty count."""
+    await _require_admin(authorization)
+    if b.pizza_count < 1 or b.pizza_count > 20:
+        raise HTTPException(400, "Invalid count")
+    user = await db.users.find_one({"user_id": b.user_id, "qr_token": b.qr_token})
+    if not user:
+        raise HTTPException(404, "Customer not found")
+    await db.users.update_one({"user_id": b.user_id}, {"$inc": {"pizza_count": b.pizza_count}})
+    nu = await db.users.find_one({"user_id": b.user_id}, {"_id": 0, "password": 0})
+    return _customer_payload(nu)
+
+
+@api.post("/admin/customer/redeem")
+async def admin_redeem(b: AdminRedeemIn, authorization: Optional[str] = Header(None)):
+    """Admin validates a reward redemption for a customer."""
+    await _require_admin(authorization)
+    if b.reward not in REWARD_THRESHOLDS:
+        raise HTTPException(400, "Invalid reward")
+    user = await db.users.find_one({"user_id": b.user_id, "qr_token": b.qr_token})
+    if not user:
+        raise HTTPException(404, "Customer not found")
+    avail = _compute_available(user.get("pizza_count", 0), user.get("rewards_redeemed", []))
+    if not any(a["reward"] == b.reward for a in avail):
+        raise HTTPException(400, "Reward not available")
+    entry = {"reward": b.reward, "redeemed_at": now().isoformat()}
+    await db.users.update_one(
+        {"user_id": b.user_id},
+        {"$push": {"rewards_redeemed": b.reward, "rewards_history": entry}},
+    )
+    nu = await db.users.find_one({"user_id": b.user_id}, {"_id": 0, "password": 0})
+    return _customer_payload(nu)
 
 @api.post("/loyalty/redeem")
 async def redeem(b: RedeemIn, authorization: Optional[str] = Header(None)):
@@ -254,6 +405,110 @@ async def redeem(b: RedeemIn, authorization: Optional[str] = Header(None)):
         {"$push": {"rewards_redeemed": b.reward, "rewards_history": entry}},
     )
     return {"ok": True, "redeemed": b.reward}
+
+@api.post("/admin/search")
+async def admin_search(b: AdminSearchIn, authorization: Optional[str] = Header(None)):
+    """Search customer by phone, email or name."""
+    await _require_admin(authorization)
+    q = b.query.strip()
+    if not q:
+        return []
+    # Try exact phone first
+    phone_clean = q.replace(" ", "")
+    users = await db.users.find(
+        {"$or": [
+            {"phone": phone_clean},
+            {"email": q.lower()},
+            {"name": {"$regex": q, "$options": "i"}},
+            {"phone": {"$regex": phone_clean, "$options": "i"}},
+        ], "is_admin": {"$ne": True}},
+        {"_id": 0, "password": 0},
+    ).limit(20).to_list(20)
+    return [_customer_payload(u) for u in users]
+
+
+@api.post("/admin/staff/create")
+async def admin_create_staff(b: CreateStaffIn, authorization: Optional[str] = Header(None)):
+    """Create a new admin/staff account (owner only)."""
+    admin = await _require_admin(authorization)
+    if admin.get("role", "owner") not in ("owner", "manager"):
+        raise HTTPException(403, "Owner/manager only")
+    phone = b.phone.strip().replace(" ", "")
+    if await db.users.find_one({"phone": phone}):
+        raise HTTPException(400, "Phone already registered")
+    uid = ("admin_" if b.role in ("owner", "manager", "cashier") else "staff_") + secrets.token_hex(6)
+    user = {
+        "user_id": uid, "phone": phone, "name": b.name, "email": None,
+        "is_admin": True, "role": b.role,
+        "pizza_count": 0, "qr_token": secrets.token_hex(12),
+        "rewards_redeemed": [], "rewards_history": [], "created_at": now(),
+    }
+    await db.users.insert_one(user)
+    user.pop("_id", None)
+    return {"created": user, "note": "Use phone + OTP to login as this staff member"}
+
+
+@api.get("/admin/dashboard")
+async def admin_dashboard(authorization: Optional[str] = Header(None)):
+    """Aggregated stats for the analytics dashboard."""
+    await _require_admin(authorization)
+    today = now().replace(hour=0, minute=0, second=0, microsecond=0)
+    week_ago = today - timedelta(days=7)
+    month_ago = today - timedelta(days=30)
+
+    async def pizzas_in_period(start):
+        # Pizzas are tracked per-user. We approximate sales via rewards_history events being insufficient.
+        # For now, sum users' pizza_count where last update happened in period via aggregation on user activity.
+        # Simple proxy: total pizza_count across all customers (excluding admins).
+        agg = await db.users.aggregate([
+            {"$match": {"is_admin": {"$ne": True}}},
+            {"$group": {"_id": None, "total_pizzas": {"$sum": "$pizza_count"}}},
+        ]).to_list(1)
+        return agg[0]["total_pizzas"] if agg else 0
+
+    total_pizzas = await pizzas_in_period(month_ago)
+    reservations_total = await db.reservations.count_documents({})
+    reservations_today = await db.reservations.count_documents({"created_at": {"$gte": today}})
+    reservations_week = await db.reservations.count_documents({"created_at": {"$gte": week_ago}})
+    reservations_month = await db.reservations.count_documents({"created_at": {"$gte": month_ago}})
+    loyalty_members = await db.users.count_documents({"is_admin": {"$ne": True}, "phone": {"$ne": None}})
+    vip_count = await db.users.count_documents({"is_admin": {"$ne": True}, "pizza_count": {"$gte": 10}})
+
+    # Redeemed rewards counts
+    rewards_agg = await db.users.aggregate([
+        {"$match": {"is_admin": {"$ne": True}}},
+        {"$unwind": "$rewards_history"},
+        {"$group": {"_id": "$rewards_history.reward", "count": {"$sum": 1}}},
+    ]).to_list(10)
+    redeemed = {r["_id"]: r["count"] for r in rewards_agg}
+
+    # Top customers
+    top_customers = await db.users.find(
+        {"is_admin": {"$ne": True}}, {"_id": 0, "password": 0}
+    ).sort("pizza_count", -1).limit(5).to_list(5)
+
+    return {
+        "total_pizzas_sold": total_pizzas,
+        "loyalty_members": loyalty_members,
+        "vip_customers": vip_count,
+        "reservations": {
+            "today": reservations_today,
+            "week": reservations_week,
+            "month": reservations_month,
+            "total": reservations_total,
+        },
+        "rewards_redeemed": {
+            "coffee": redeemed.get("coffee", 0),
+            "dessert": redeemed.get("dessert", 0),
+            "margherita": redeemed.get("margherita", 0),
+            "total": sum(redeemed.values()),
+        },
+        "top_customers": [
+            {"name": c["name"], "phone": c.get("phone"), "pizzas": c.get("pizza_count", 0)}
+            for c in top_customers
+        ],
+    }
+
 
 @api.get("/")
 async def root(): return {"service": "Pizza Denfert API", "status": "ok"}

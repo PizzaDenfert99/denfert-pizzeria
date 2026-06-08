@@ -27,6 +27,10 @@ async function req(path: string, opts: RequestInit = {}) {
 }
 
 export const api = {
+  otpRequest: (phone: string, name?: string) =>
+    req("/auth/otp/request", { method: "POST", body: JSON.stringify({ phone, name }) }),
+  otpVerify: (phone: string, code: string, name?: string) =>
+    req("/auth/otp/verify", { method: "POST", body: JSON.stringify({ phone, code, name }) }),
   register: (email: string, password: string, name: string) =>
     req("/auth/register", { method: "POST", body: JSON.stringify({ email, password, name }) }),
   login: (email: string, password: string) =>
@@ -40,8 +44,16 @@ export const api = {
   createGuestReservation: (data: any) => req("/reservations/guest", { method: "POST", body: JSON.stringify(data) }),
   myReservations: () => req("/reservations/me"),
   loyalty: () => req("/loyalty/me"),
-  addPurchase: (pizza_count: number) => req("/loyalty/add-purchase", { method: "POST", body: JSON.stringify({ pizza_count }) }),
   redeem: (reward: string) => req("/loyalty/redeem", { method: "POST", body: JSON.stringify({ reward }) }),
+  adminScan: (qr_data: string) => req("/admin/scan", { method: "POST", body: JSON.stringify({ qr_data }) }),
+  adminSearch: (query: string) => req("/admin/search", { method: "POST", body: JSON.stringify({ query }) }),
+  adminAddPizza: (user_id: string, qr_token: string, pizza_count: number = 1) =>
+    req("/admin/customer/add-pizza", { method: "POST", body: JSON.stringify({ user_id, qr_token, pizza_count }) }),
+  adminRedeem: (user_id: string, qr_token: string, reward: string) =>
+    req("/admin/customer/redeem", { method: "POST", body: JSON.stringify({ user_id, qr_token, reward }) }),
+  adminDashboard: () => req("/admin/dashboard"),
+  adminCreateStaff: (phone: string, name: string, role: string) =>
+    req("/admin/staff/create", { method: "POST", body: JSON.stringify({ phone, name, role }) }),
 };
 
 export { BASE };

@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="28" time="2.937" timestamp="2026-06-08T14:15:40.074566+00:00" hostname="agent-env-d473a971-cd6a-4594-88d2-fecf5e48ff6b"><testcase classname="backend.tests.test_admin_flows.TestOtpAuth" name="test_otp_request_returns_dev_code" time="0.266" /><testcase classname="backend.tests.test_admin_flows.TestOtpAuth" name="test_otp_verify_wrong_code" time="0.117" /><testcase classname="backend.tests.test_admin_flows.TestOtpAuth" name="test_otp_verify_without_request" time="0.060" /><testcase classname="backend.tests.test_admin_flows.TestOtpAuth" name="test_otp_request_short_phone" time="0.045" /><testcase classname="backend.tests.test_admin_flows.TestOtpAuth" name="test_admin_login_legacy" time="0.288" /><testcase classname="backend.tests.test_admin_flows.TestAdminScan" name="test_scan_valid_qr" time="0.473" /><testcase classname="backend.tests.test_admin_flows.TestAdminScan" name="test_scan_malformed_qr" time="0.049" /><testcase classname="backend.tests.test_admin_flows.TestAdminScan" name="test_scan_unknown_user" time="0.048" /><testcase classname="backend.tests.test_admin_flows.TestAdminScan" name="test_scan_without_admin_token" time="0.049" /><testcase classname="backend.tests.test_admin_flows.TestAdminAddPizza" name="test_add_one_pizza" time="0.053" /><testcase classname="backend.tests.test_admin_flows.TestAdminAddPizza" name="test_add_to_3_yields_coffee" time="0.050" /><testcase classname="backend.tests.test_admin_flows.TestAdminAddPizza" name="test_add_to_5_yields_dessert" time="0.052" /><testcase classname="backend.tests.test_admin_flows.TestAdminAddPizza" name="test_add_to_10_yields_margherita" time="0.051" /><testcase classname="backend.tests.test_admin_flows.TestAdminAddPizza" name="test_add_zero_rejected" time="0.053" /><testcase classname="backend.tests.test_admin_flows.TestAdminAddPizza" name="test_add_too_many_rejected" time="0.047" /><testcase classname="backend.tests.test_admin_flows.TestAdminAddPizza" name="test_add_wrong_qr_token" time="0.050" /><testcase classname="backend.tests.test_admin_flows.TestAdminRedeem" name="test_redeem_coffee" time="0.183" /><testcase classname="backend.tests.test_admin_flows.TestAdminRedeem" name="test_redeem_unavailable" time="0.111"><failure message="requests.exceptions.JSONDecodeError: Expecting value: line 1 column 1 (char 0)">/root/.venv/lib/python3.11/site-packages/requests/models.py:1116: in json
+    return complexjson.loads(self.text, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/json/__init__.py:346: in loads
+    return _default_decoder.decode(s)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/json/decoder.py:337: in decode
+    obj, end = self.raw_decode(s, idx=_w(s, 0).end())
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/json/decoder.py:355: in raw_decode
+    raise JSONDecodeError("Expecting value", s, err.value) from None
+E   json.decoder.JSONDecodeError: Expecting value: line 1 column 1 (char 0)
+
+During handling of the above exception, another exception occurred:
+backend/tests/test_admin_flows.py:256: in test_redeem_unavailable
+    u = v.json()["user"]
+        ^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/requests/models.py:1120: in json
+    raise RequestsJSONDecodeError(e.msg, e.doc, e.pos)
+E   requests.exceptions.JSONDecodeError: Expecting value: line 1 column 1 (char 0)</failure></testcase><testcase classname="backend.tests.test_admin_flows.TestAdminRedeem" name="test_redeem_invalid_name" time="0.050" /><testcase classname="backend.tests.test_admin_flows.TestAdminSearch" name="test_search_by_full_phone" time="0.053"><failure message="assert 500 == 200&#10; +  where 500 = &lt;Response [500]&gt;.status_code">backend/tests/test_admin_flows.py:279: in test_search_by_full_phone
+    assert r.status_code == 200
+E   assert 500 == 200
+E    +  where 500 = &lt;Response [500]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_admin_flows.TestAdminSearch" name="test_search_by_partial_name" time="0.051" /><testcase classname="backend.tests.test_admin_flows.TestAdminSearch" name="test_search_empty" time="0.113" /><testcase classname="backend.tests.test_admin_flows.TestAdminSearch" name="test_search_excludes_admins" time="0.061" /><testcase classname="backend.tests.test_admin_flows.TestAdminDashboard" name="test_dashboard_shape" time="0.058" /><testcase classname="backend.tests.test_admin_flows.TestAdminDashboard" name="test_dashboard_non_admin_rejected" time="0.048" /><testcase classname="backend.tests.test_admin_flows.TestAdminCreateStaff" name="test_create_staff" time="0.094"><failure message="AssertionError: Staff create failed: 500 Internal Server Error&#10;assert 500 == 200&#10; +  where 500 = &lt;Response [500]&gt;.status_code">backend/tests/test_admin_flows.py:344: in test_create_staff
+    assert r.status_code == 200, f"Staff create failed: {r.status_code} {r.text}"
+E   AssertionError: Staff create failed: 500 Internal Server Error
+E   assert 500 == 200
+E    +  where 500 = &lt;Response [500]&gt;.status_code</failure></testcase><testcase classname="backend.tests.test_admin_flows.TestAdminCreateStaff" name="test_create_staff_duplicate" time="0.000"><failure message="AssertionError: previous test must have run&#10;assert None">backend/tests/test_admin_flows.py:353: in test_create_staff_duplicate
+    assert phone, "previous test must have run"
+E   AssertionError: previous test must have run
+E   assert None</failure></testcase><testcase classname="backend.tests.test_admin_flows.TestAdminCreateStaff" name="test_create_staff_as_customer_forbidden" time="0.049" /></testsuite></testsuites>

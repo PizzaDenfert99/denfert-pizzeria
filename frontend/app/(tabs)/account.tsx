@@ -23,15 +23,16 @@ const REWARD_INFO: Record<string, { fr: string; en: string; threshold: number; i
 };
 
 export default function Account() {
-  const { user, loading, signInEmail, signUp, signInGoogleSession, signOut } = useAuth();
+  const { user, loading, signInGoogleSession, signOut, refresh } = useAuth();
   const { t, lang, setLang } = useI18n();
   const router = useRouter();
 
-  // Auth form state
-  const [mode, setMode] = useState<"signin" | "signup">("signin");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  // Phone OTP state
+  const [phone, setPhone] = useState("");
+  const [code, setCode] = useState("");
   const [name, setName] = useState("");
+  const [step, setStep] = useState<"phone" | "code">("phone");
+  const [devCode, setDevCode] = useState<string | null>(null);
   const [authLoading, setAuthLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
@@ -52,17 +53,30 @@ export default function Account() {
 
   useEffect(() => { load(); }, [load]);
 
-  const submitAuth = async () => {
+  const requestOtp = async () => {
     setErr(null);
+    if (phone.trim().length < 6) { setErr(lang === "fr" ? "Numéro invalide" : "Invalid number"); return; }
     setAuthLoading(true);
     try {
-      if (mode === "signin") await signInEmail(email.trim(), password);
-      else await signUp(email.trim(), password, name.trim() || email.split("@")[0]);
+      const r = await api.otpRequest(phone.trim(), name.trim() || undefined);
+      setDevCode(r.dev_code);
+      setStep("code");
+    } catch {
+      setErr(lang === "fr" ? "Erreur, réessayez" : "Error, retry");
+    } finally { setAuthLoading(false); }
+  };
+
+  const verifyOtp = async () => {
+    setErr(null);
+    if (code.trim().length !== 6) { setErr(lang === "fr" ? "Code à 6 chiffres" : "6-digit code"); return; }
+    setAuthLoading(true);
+    try {
+      const res = await api.otpVerify(phone.trim(), code.trim(), name.trim() || undefined);
+      await setToken(res.token);
+      await refresh();
     } catch (e: any) {
-      setErr(e?.message?.includes("401") ? (lang === "fr" ? "Identifiants invalides" : "Invalid credentials") : (lang === "fr" ? "Erreur, réessayez" : "Error, try again"));
-    } finally {
-      setAuthLoading(false);
-    }
+      setErr(e?.message?.includes("401") ? (lang === "fr" ? "Code invalide" : "Invalid code") : (lang === "fr" ? "Erreur, réessayez" : "Error, retry"));
+    } finally { setAuthLoading(false); }
   };
 
   const google = async () => {
@@ -82,13 +96,6 @@ export default function Account() {
     } finally { setAuthLoading(false); }
   };
 
-  const addPurchase = async () => {
-    try {
-      await api.addPurchase(1);
-      await load();
-    } catch {}
-  };
-
   const claim = async (reward: string) => {
     try {
       await api.redeem(reward);
@@ -100,7 +107,7 @@ export default function Account() {
     return <View style={styles.container}><ActivityIndicator color={theme.color.brand} style={{ flex: 1 }} /></View>;
   }
 
-  // ============== AUTH VIEW (in Account tab) ==============
+  // ============== AUTH VIEW (Phone + OTP) ==============
   if (!user) {
     return (
       <View testID="auth-view" style={styles.container}>
@@ -113,43 +120,82 @@ export default function Account() {
                 <Feather name="globe" size={12} color={theme.color.brand} />
                 <Text style={styles.langTxt}>{lang.toUpperCase()}</Text>
               </Pressable>
-              <View style={{ alignItems: "center", marginTop: theme.space.lg }}>
-                <RNImage source={{ uri: LOGO }} style={styles.authLogo} resizeMode="contain" />
-              </View>
-              <View style={{ marginTop: theme.space.lg, marginBottom: theme.space.xl, alignItems: "center" }}>
-                <Text style={styles.eyebrow}>— {lang === "fr" ? "ESPACE CLIENT" : "MEMBER AREA"}</Text>
-                <Text style={[styles.bigTitle, { textAlign: "center" }]}>{lang === "fr" ? "Programme\nde fidélité" : "Rewards\nprogram"}</Text>
+              <View style={{ marginTop: theme.space.xxl, marginBottom: theme.space.xl, alignItems: "center" }}>
+                <Text style={styles.eyebrow}>— {lang === "fr" ? "FIDÉLITÉ CLIENT" : "CUSTOMER LOYALTY"}</Text>
+                <Text style={[styles.bigTitle, { textAlign: "center" }]}>{lang === "fr" ? "Carte\nfidélité VIP" : "VIP\nLoyalty card"}</Text>
                 <Text style={[styles.subTxt, { textAlign: "center" }]}>{t("pointsHint")}</Text>
               </View>
 
-              <Pressable testID="google-signin-btn" onPress={google} style={styles.googleBtn} disabled={authLoading}>
-                <Feather name="chrome" size={16} color={theme.color.onSurface} />
-                <Text style={styles.googleTxt}>{t("signInGoogle")}</Text>
-              </Pressable>
-              <View style={styles.dividerRow}>
-                <View style={styles.line} /><Text style={styles.lineTxt}>{lang === "fr" ? "OU" : "OR"}</Text><View style={styles.line} />
-              </View>
-
-              {mode === "signup" && (
-                <TextInput testID="signup-name-input" style={styles.input} placeholder={t("name")} placeholderTextColor={theme.color.muted} value={name} onChangeText={setName} autoCapitalize="words" />
+              {step === "phone" ? (
+                <>
+                  <Text style={styles.fieldLbl}>{lang === "fr" ? "Numéro de téléphone" : "Phone number"}</Text>
+                  <TextInput
+                    testID="phone-input"
+                    style={styles.input}
+                    placeholder="+33 6 12 34 56 78"
+                    placeholderTextColor={theme.color.muted}
+                    keyboardType="phone-pad"
+                    value={phone}
+                    onChangeText={setPhone}
+                    autoFocus
+                  />
+                  <Text style={styles.fieldLbl}>{lang === "fr" ? "Prénom (optionnel)" : "First name (optional)"}</Text>
+                  <TextInput
+                    testID="name-input"
+                    style={styles.input}
+                    placeholder={lang === "fr" ? "Marie" : "Marie"}
+                    placeholderTextColor={theme.color.muted}
+                    value={name}
+                    onChangeText={setName}
+                  />
+                  {err && <Text testID="auth-error" style={styles.err}>{err}</Text>}
+                  <Pressable testID="request-otp-btn" onPress={requestOtp} disabled={authLoading} style={styles.submit}>
+                    {authLoading ? <ActivityIndicator color={theme.color.onBrandPrimary} /> : (
+                      <>
+                        <Feather name="send" size={16} color={theme.color.onBrandPrimary} />
+                        <Text style={[styles.submitTxt, { marginLeft: 8 }]}>{lang === "fr" ? "Recevoir le code" : "Send code"}</Text>
+                      </>
+                    )}
+                  </Pressable>
+                  <View style={styles.dividerRow}>
+                    <View style={styles.line} /><Text style={styles.lineTxt}>{lang === "fr" ? "OU" : "OR"}</Text><View style={styles.line} />
+                  </View>
+                  <Pressable testID="google-signin-btn" onPress={google} style={styles.googleBtn} disabled={authLoading}>
+                    <Feather name="chrome" size={16} color={theme.color.onSurface} />
+                    <Text style={styles.googleTxt}>{t("signInGoogle")}</Text>
+                  </Pressable>
+                </>
+              ) : (
+                <>
+                  <Text style={styles.fieldLbl}>{lang === "fr" ? `Code envoyé au ${phone}` : `Code sent to ${phone}`}</Text>
+                  {devCode && (
+                    <View style={styles.devBox}>
+                      <Feather name="info" size={13} color={theme.color.brand} />
+                      <Text style={styles.devTxt}>{lang === "fr" ? "Mode démo · Code : " : "Demo mode · Code: "}<Text style={styles.devCode}>{devCode}</Text></Text>
+                    </View>
+                  )}
+                  <TextInput
+                    testID="otp-input"
+                    style={[styles.input, { fontSize: 24, letterSpacing: 8, textAlign: "center", fontWeight: "600" }]}
+                    placeholder="000000"
+                    placeholderTextColor={theme.color.muted}
+                    keyboardType="number-pad"
+                    maxLength={6}
+                    value={code}
+                    onChangeText={setCode}
+                    autoFocus
+                  />
+                  {err && <Text testID="auth-error" style={styles.err}>{err}</Text>}
+                  <Pressable testID="verify-otp-btn" onPress={verifyOtp} disabled={authLoading} style={styles.submit}>
+                    {authLoading ? <ActivityIndicator color={theme.color.onBrandPrimary} /> : (
+                      <Text style={styles.submitTxt}>{lang === "fr" ? "Valider" : "Verify"}</Text>
+                    )}
+                  </Pressable>
+                  <Pressable testID="back-phone-btn" onPress={() => { setStep("phone"); setCode(""); setDevCode(null); setErr(null); }} style={{ marginTop: theme.space.lg }}>
+                    <Text style={styles.toggle}>{lang === "fr" ? "← Modifier le numéro" : "← Change number"}</Text>
+                  </Pressable>
+                </>
               )}
-              <TextInput testID="auth-email-input" style={styles.input} placeholder={t("email")} placeholderTextColor={theme.color.muted} autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
-              <TextInput testID="auth-password-input" style={styles.input} placeholder={t("password")} placeholderTextColor={theme.color.muted} secureTextEntry value={password} onChangeText={setPassword} />
-
-              {err && <Text testID="auth-error" style={styles.err}>{err}</Text>}
-
-              <Pressable testID="auth-submit-btn" onPress={submitAuth} disabled={authLoading} style={styles.submit}>
-                {authLoading ? <ActivityIndicator color={theme.color.onBrandPrimary} /> : (
-                  <Text style={styles.submitTxt}>{mode === "signin" ? t("signIn") : t("signUp")}</Text>
-                )}
-              </Pressable>
-              <Pressable testID="auth-toggle-mode" onPress={() => setMode(mode === "signin" ? "signup" : "signin")} style={{ marginTop: theme.space.lg }}>
-                <Text style={styles.toggle}>
-                  {mode === "signin"
-                    ? (lang === "fr" ? "Nouveau ? Créer un compte" : "New here? Create account")
-                    : (lang === "fr" ? "Déjà un compte ? Se connecter" : "Have an account? Sign in")}
-                </Text>
-              </Pressable>
             </ScrollView>
           </KeyboardAvoidingView>
         </SafeAreaView>
@@ -205,10 +251,12 @@ export default function Account() {
               <Text style={styles.bigCount}>{pc}</Text>
               <Text style={styles.bigCountLbl}>{lang === "fr" ? "pizzas achetées" : "pizzas purchased"}</Text>
             </View>
-            <Pressable testID="add-pizza-btn" onPress={addPurchase} style={styles.simulateBtn}>
-              <Feather name="plus" size={14} color={theme.color.brand} />
-              <Text style={styles.simulateTxt}>{lang === "fr" ? "Simuler +1 pizza" : "Simulate +1 pizza"}</Text>
-            </Pressable>
+            {user.is_admin && (
+              <Pressable testID="admin-panel-btn" onPress={() => router.push("/admin")} style={styles.adminBtn}>
+                <Feather name="shield" size={14} color={theme.color.brand} />
+                <Text style={styles.adminBtnTxt}>{lang === "fr" ? "Panneau admin" : "Admin panel"}</Text>
+              </Pressable>
+            )}
           </View>
 
           {/* SEGMENT TABS */}
@@ -318,10 +366,13 @@ const styles = StyleSheet.create({
   lineTxt: { color: theme.color.muted, fontSize: 11, letterSpacing: 2 },
   input: { height: 54, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, paddingHorizontal: theme.space.lg, color: theme.color.onSurface, marginBottom: theme.space.md, backgroundColor: "rgba(255,255,255,0.04)", fontSize: 15 },
   err: { color: theme.color.error, fontSize: 13, marginBottom: theme.space.md, textAlign: "center" },
-  submit: { height: 54, borderRadius: theme.radius.md, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center", marginTop: theme.space.sm },
+  submit: { flexDirection: "row", height: 54, borderRadius: theme.radius.md, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center", marginTop: theme.space.md },
   submitTxt: { color: theme.color.onBrandPrimary, fontSize: 14, fontWeight: "700", letterSpacing: 1 },
   toggle: { color: theme.color.brand, textAlign: "center", fontSize: 13 },
-  authLogo: { width: 220, height: 220 },
+  fieldLbl: { color: theme.color.onSurfaceTertiary, fontSize: 11, letterSpacing: 1.5, fontWeight: "600", marginBottom: 6, marginTop: theme.space.md },
+  devBox: { flexDirection: "row", alignItems: "center", gap: 8, padding: 10, marginBottom: theme.space.md, borderRadius: theme.radius.md, backgroundColor: "rgba(212,175,55,0.12)", borderWidth: 1, borderColor: "rgba(212,175,55,0.4)" },
+  devTxt: { color: theme.color.onSurface, fontSize: 12 },
+  devCode: { color: theme.color.brand, fontWeight: "700", letterSpacing: 2 },
   loyaltyCard: { marginTop: theme.space.xl, borderRadius: theme.radius.lg, padding: theme.space.xl, borderWidth: 1, borderColor: "rgba(212,175,55,0.4)", overflow: "hidden" },
   cardHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
   cardEyebrow: { color: theme.color.brand, fontSize: 10, letterSpacing: 3, fontWeight: "700" },
@@ -334,6 +385,8 @@ const styles = StyleSheet.create({
   bigCountLbl: { color: theme.color.onSurfaceTertiary, fontSize: 13 },
   simulateBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, paddingVertical: 10, marginTop: theme.space.md, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, borderStyle: "dashed" },
   simulateTxt: { color: theme.color.brand, fontSize: 12, fontWeight: "600" },
+  adminBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, paddingVertical: 12, marginTop: theme.space.md, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand, backgroundColor: "rgba(212,175,55,0.08)" },
+  adminBtnTxt: { color: theme.color.brand, fontSize: 12, fontWeight: "700", letterSpacing: 1.5 },
   segmentRow: { flexDirection: "row", gap: 6, marginTop: theme.space.xxl, marginBottom: theme.space.lg },
   segment: { flex: 1, height: 38, borderRadius: 999, borderWidth: 1, borderColor: theme.color.border, alignItems: "center", justifyContent: "center" },
   segmentActive: { backgroundColor: "rgba(212,175,55,0.1)", borderColor: theme.color.brand },
