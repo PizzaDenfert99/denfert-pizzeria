@@ -8,9 +8,10 @@ import { useRouter } from "expo-router";
 import { theme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 
-const HERO = "https://images.unsplash.com/photo-1601924582970-9238bcb495d9?auto=format&fit=crop&w=1400&q=80";
+const HERO_URI = "https://images.unsplash.com/photo-1593504049359-74330189a345?auto=format&fit=crop&w=1400&q=80";
 const RESTAURANT = "https://images.pexels.com/photos/4997894/pexels-photo-4997894.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=900&w=1200";
-const LOGO = "https://customer-assets.emergentagent.com/job_denfert-pizzeria/artifacts/nwj3edom_file_00000000005c71f489c484606f9b5e35.png";
+const LOGO_URI = "https://customer-assets.emergentagent.com/job_denfert-pizzeria/artifacts/nwj3edom_file_00000000005c71f489c484606f9b5e35.png";
+const LOGO_NATIVE = require("@/assets/images/logo.png");
 
 export default function Home() {
   const { t, lang, setLang } = useI18n();
@@ -30,11 +31,21 @@ export default function Home() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 140 }}>
         {/* HERO */}
         <View style={styles.hero}>
-          <Image source={HERO} style={StyleSheet.absoluteFillObject} contentFit="cover" />
-          <LinearGradient colors={["rgba(5,5,5,0.95)", "rgba(5,5,5,0.7)", "rgba(5,5,5,0.05)", "rgba(5,5,5,0.0)"]} locations={[0, 0.28, 0.55, 1]} style={StyleSheet.absoluteFillObject} />
+          {Platform.OS === "web" ? (
+            // @ts-ignore - native web img tag
+            <img src={HERO_URI} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover" }} alt="Pizza Denfert" />
+          ) : (
+            <RNImage source={{ uri: HERO_URI }} style={StyleSheet.absoluteFillObject as any} resizeMode="cover" />
+          )}
+          <LinearGradient colors={["rgba(5,5,5,0.96)", "rgba(5,5,5,0.85)", "rgba(5,5,5,0.35)", "rgba(5,5,5,0.0)"]} locations={[0, 0.35, 0.6, 1]} style={StyleSheet.absoluteFillObject} />
           <SafeAreaView edges={["top"]} style={{ flex: 1, paddingHorizontal: theme.space.lg, paddingTop: theme.space.md }}>
             <View style={styles.headerRow}>
-              <RNImage source={{ uri: LOGO }} style={styles.cornerLogo} resizeMode="contain" />
+              {Platform.OS === "web" ? (
+                // @ts-ignore
+                <img src={LOGO_URI} style={{ width: 175, height: 175, marginTop: -8, marginLeft: -8, objectFit: "contain" }} alt="Pizza Denfert" />
+              ) : (
+                <RNImage source={LOGO_NATIVE} style={styles.cornerLogo} resizeMode="contain" />
+              )}
               <Pressable testID="lang-toggle" onPress={() => setLang(lang === "fr" ? "en" : "fr")} style={styles.langBtn}>
                 <Feather name="globe" size={13} color={theme.color.brand} />
                 <Text style={styles.langTxt}>{lang.toUpperCase()}</Text>
