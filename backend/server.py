@@ -394,18 +394,46 @@ async def admin_scan(b: ScanIn, authorization: Optional[str] = Header(None)):
 
 @api.post("/admin/customer/add-pizza")
 async def admin_add_pizza(b: AdminPizzaInExt, authorization: Optional[str] = Header(None)):
-    """Admin adds pizza(s) to a customer's loyalty count and logs the event."""
+    """Admin adjusts a customer's loyalty pizza count.
+
+    Positive `pizza_count` adds; negative values remove (clamped at 0).
+    Logs every adjustment (including negatives) for analytics.
+    """
     admin = await _require_admin(authorization)
-    if b.pizza_count < 1 or b.pizza_count > 20:
+    if b.pizza_count == 0 or b.pizza_count < -20 or b.pizza_count > 20:
         raise HTTPException(400, "Invalid count")
     user = await db.users.find_one({"user_id": b.user_id, "qr_token": b.qr_token})
     if not user:
         raise HTTPException(404, "Customer not found")
-    await db.users.update_one({"user_id": b.user_id}, {"$inc": {"pizza_count": b.pizza_count}})
-    # Log every add event for time-windowed analytics + popular pizzas.
+    current = int(user.get("pizza_count", 0) or 0)
+    # Clamp at zero — never go below.
+    effective_delta = b.pizza_count if b.pizza_count >= 0 else max(b.pizza_count, -current)
+    new_count = current + effective_delta
+    if effective_delta == 0:
+        # Already at 0 and the admin tried to subtract → no-op, still return current payload.
+        nu = await db.users.find_one({"user_id": b.user_id}, {"_id": 0, "password": 0})
+        return _customer_payload(nu)
+    update: dict = {"$set": {"pizza_count": new_count}}
+    # If we removed pizzas, also clear over-counted rewards in `rewards_redeemed` to keep
+    # the loyalty math consistent (so the customer can earn back the same tier later).
+    if effective_delta < 0:
+        redeemed = list(user.get("rewards_redeemed", []))
+        for key, thresh in REWARD_THRESHOLDS.items():
+            allowed = new_count // thresh
+            used = sum(1 for r in redeemed if r == key)
+            while used > allowed:
+                # Remove one redemption of this key
+                for i in range(len(redeemed) - 1, -1, -1):
+                    if redeemed[i] == key:
+                        redeemed.pop(i)
+                        used -= 1
+                        break
+        update["$set"]["rewards_redeemed"] = redeemed
+    await db.users.update_one({"user_id": b.user_id}, update)
+    # Log the adjustment (positive or negative) for analytics.
     await db.pizza_events.insert_one({
         "user_id": b.user_id,
-        "count": b.pizza_count,
+        "count": effective_delta,
         "pizza_id": b.pizza_id,
         "admin_id": admin.get("user_id"),
         "at": now(),

@@ -1,0 +1,42 @@
+{
+  "summary": "Iteration 4 backend bug-fix verification for POST /api/admin/customer/add-pizza decrement support: 71/71 PASSED (28 admin_flows + 23 iter3 + 20 NEW iter4). All review scenarios A–J verified: (A) positive 3 grants coffee, (B) -1 removes coffee from available_rewards, (C) -10 from pc=2 clamps to 0 with no rewards, (D) -1 at pc=0 returns 200 no-op (NOT 400), (E) reward pruning — coffee redeemed at 3 → subtract to 2 → add back to 3 → coffee available again with available=1, plus direct mongo verification that rewards_redeemed array no longer contains the pruned key, (F) validation: pizza_count in {0, 21, -21, 100, -100} → 400; +20 and -20 → 200 (edges accepted), (G) wrong qr_token → 404 for both positive and negative requests, (H) customer (non-admin) token → 403 for both signs, (J) pizza_events log verified two ways — dashboard top_pizzas net delta of +1 after +2/-1 sequence AND direct mongo count_documents({user_id, count:-1}) increments by 1. Also asserted that a no-op subtract at zero does NOT insert a pizza_events row. (I) Regression: previous 51 tests still pass; suite is stable at 71/71 across 3 consecutive runs.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/admin/customer/add-pizza",
+        "issue": "Carry-over from iter3: still using 12-byte JWT_SECRET; PyJWT logs InsecureKeyLengthWarning on every /auth/login. Not specific to this fix."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_add_pizza_negative_iter4.py",
+    "/app/backend/tests/test_admin_flows.py",
+    "/app/backend/tests/test_staff_dashboard_iter3.py",
+    "/app/test_reports/pytest/pytest_results_iter4.xml"
+  ],
+  "action_items": [
+    "Bug fix verified — no further changes required for the decrement feature on POST /api/admin/customer/add-pizza."
+  ],
+  "critical_code_review_comments": [
+    "server.py is 741 lines (was 713 in iter3) — past the 700-line soft cap. Consider extracting auth, loyalty, and admin routers into separate modules.",
+    "admin_add_pizza correctly implements clamp-at-zero via `effective_delta = max(b.pizza_count, -current)` and skips both the user update AND pizza_events insert when effective_delta == 0 — this is the correct behaviour for the no-op-at-zero case.",
+    "Reward pruning loop iterates REWARD_THRESHOLDS in dict-insertion order (coffee, dessert, margherita) and pops the LAST matching entry of each key from `rewards_redeemed` until `used <= allowed`. This is order-stable and correct for the loyalty math, but the inner `for i in range(len(redeemed)-1, -1, -1)` + `break` could be simplified to a single rindex/pop without behavioural change.",
+    "Suggestion: also include an explicit `effective_delta` field in the pizza_events row alongside `count`; right now `count` already stores the clamped delta (so subtracting 10 from pc=2 logs count=-2, not -10), which is correct but worth documenting since it differs from the raw request body."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_add_pizza_negative_iter4.py (new file, 20 tests covering scenarios A–H, J)"
+  ],
+  "success_rate": {"backend": "100% (71/71)", "frontend": "skipped per request"},
+  "seed_data_creation": "Each test creates its own fresh OTP customer (TEST iter4 add-pizza customer) via _make_customer() to keep tests fully isolated. pizza_events accumulates entries with pizza_id='p-margherita' across runs (intentional — dashboard regression test uses before/after deltas, not absolute counts).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Run the full suite together: `pytest /app/backend/tests/ -v`. Stable at 71/71 across 3 consecutive runs. The iter4 file (test_add_pizza_negative_iter4.py) is self-contained: it creates a fresh OTP customer per scenario to avoid cross-test interference. The pizza_events dashboard test uses before/after deltas instead of absolute counts so it is robust to leftover data from previous runs. No mongo cleanup is required because all rows are TEST-prefixed and use ephemeral phone numbers.",
+  "rca_of_issue": "N/A — this iteration is bug-fix verification. The previous bug (POST /api/admin/customer/add-pizza rejecting pizza_count < 1) has been fully addressed in server.py lines ~395–442: validation now accepts [-20, 20] excluding 0; negative values clamp via `effective_delta = max(b.pizza_count, -current)`; reward pruning runs on negative deltas; pizza_events is only inserted when effective_delta != 0 (so no-op subtract at zero does not pollute analytics). All A–J scenarios in the review request behave as specified."
+}

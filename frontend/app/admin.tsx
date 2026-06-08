@@ -415,6 +415,14 @@ export default function AdminPanel() {
                 )}
 
                 <View style={styles.qtyRow}>
+                  <Pressable
+                    testID="remove-pizza-1"
+                    disabled={busy || customer.pizza_count <= 0}
+                    onPress={() => addPizzas(-1)}
+                    style={[styles.qtyBtnMinus, (busy || customer.pizza_count <= 0) && { opacity: 0.35 }]}
+                  >
+                    <Feather name="minus" size={18} color={theme.color.error} />
+                  </Pressable>
                   {[1, 2, 3, 4, 5].map((n) => (
                     <Pressable
                       key={n}
@@ -539,6 +547,7 @@ const styles = StyleSheet.create({
   countBig: { color: theme.color.brand, fontSize: 72, fontWeight: "300", lineHeight: 80 },
   qtyRow: { flexDirection: "row", gap: 6, marginTop: theme.space.md, width: "100%" },
   qtyBtn: { flex: 1, height: 48, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(212,175,55,0.1)" },
+  qtyBtnMinus: { width: 48, height: 48, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.error, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(198,40,40,0.08)" },
   qtyTxt: { color: theme.color.brand, fontSize: 16, fontWeight: "700" },
   pickerLbl: { color: theme.color.onSurfaceTertiary, fontSize: 9, letterSpacing: 1.5, fontWeight: "700", marginBottom: 2 },
   pizzaChip: { paddingHorizontal: 12, height: 32, borderRadius: 999, borderWidth: 1, borderColor: theme.color.border, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.04)" },
