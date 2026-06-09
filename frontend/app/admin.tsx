@@ -492,6 +492,30 @@ export default function AdminPanel() {
                   </View>
                 );
               })}
+
+              {customer.history && customer.history.length > 0 && (
+                <>
+                  <Text style={[styles.sectionLbl, { marginTop: theme.space.xl }]}>{lang === "fr" ? "HISTORIQUE" : "HISTORY"}</Text>
+                  <View style={styles.historyList}>
+                    {customer.history.slice().reverse().slice(0, 10).map((h: any, i: number) => {
+                      const rwd = REWARDS.find((r) => r.key === h.reward);
+                      const d = h.redeemed_at ? new Date(h.redeemed_at) : null;
+                      const dateStr = d ? `${d.toLocaleDateString(lang === "fr" ? "fr-FR" : "en-GB", { day: "2-digit", month: "short" })} · ${d.toLocaleTimeString(lang === "fr" ? "fr-FR" : "en-GB", { hour: "2-digit", minute: "2-digit" })}` : "—";
+                      return (
+                        <View key={`hist-${i}`} style={styles.historyRow}>
+                          <View style={[styles.rewardIcon, styles.rewardIconActive, { width: 32, height: 32 }]}>
+                            <Feather name={(rwd?.icon || "gift") as any} size={14} color={theme.color.onBrandPrimary} />
+                          </View>
+                          <View style={{ flex: 1 }}>
+                            <Text style={styles.historyName}>{lang === "fr" ? (rwd?.fr || h.reward) : (rwd?.en || h.reward)}</Text>
+                            <Text style={styles.historySub}>{dateStr}</Text>
+                          </View>
+                        </View>
+                      );
+                    })}
+                  </View>
+                </>
+              )}
             </View>
           )}
 
@@ -562,6 +586,10 @@ const styles = StyleSheet.create({
   rewardIconActive: { backgroundColor: theme.color.brand },
   rewardName: { color: theme.color.onSurface, fontSize: 14, fontWeight: "500" },
   rewardSub: { color: theme.color.onSurfaceTertiary, fontSize: 12, marginTop: 2 },
+  historyList: { padding: 12, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surfaceSecondary },
+  historyRow: { flexDirection: "row", alignItems: "center", gap: 12, paddingVertical: 8 },
+  historyName: { color: theme.color.onSurface, fontSize: 13, fontWeight: "500" },
+  historySub: { color: theme.color.onSurfaceTertiary, fontSize: 11, marginTop: 2 },
   validateBtn: { paddingHorizontal: 16, height: 36, borderRadius: 999, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
   validateTxt: { color: theme.color.onBrandPrimary, fontSize: 12, fontWeight: "700", letterSpacing: 0.8 },
   lockedTag: { width: 36, height: 36, borderRadius: 18, borderWidth: 1, borderColor: theme.color.border, alignItems: "center", justifyContent: "center" },

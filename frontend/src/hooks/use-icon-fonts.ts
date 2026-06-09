@@ -1,16 +1,19 @@
-// Icon font loader. Uses the static .font property exported by @expo/vector-icons,
-// which is a Metro require() of the bundled .ttf file. This works on every
-// runtime: Expo Go, native dev builds, native production builds, and web.
-//
-// Why not load from a CDN? jsdelivr occasionally returns a 0-byte response
-// for some icon families (notably Feather), which causes:
-//   "ExpoFontLoader.loadAsync has been rejected. Font file for feather is empty."
-// Bundling the .ttf instead of fetching it removes that failure mode entirely.
+// Icon font loader + premium serif for the brand wordmark.
+// Uses the static .font property from @expo/vector-icons (bundled .ttf, no CDN).
+// Playfair Display is loaded from @expo-google-fonts — a serif used by many
+// French and Italian fine-dining restaurants. Loaded once at startup so the
+// brand wordmark renders consistently across Expo Go, dev and production builds.
 
 import { useFonts } from "expo-font";
 import { Feather } from "@expo/vector-icons";
+import {
+  PlayfairDisplay_500Medium,
+  PlayfairDisplay_600SemiBold,
+} from "@expo-google-fonts/playfair-display";
 
 export const useIconFonts = (): readonly [boolean, Error | null] =>
   useFonts({
     ...Feather.font,
+    PlayfairDisplay_500Medium,
+    PlayfairDisplay_600SemiBold,
   });

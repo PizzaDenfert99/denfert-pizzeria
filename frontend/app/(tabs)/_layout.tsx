@@ -10,8 +10,17 @@ export default function TabsLayout() {
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
   // Ensure the tab bar always clears the Android navigation gesture bar / 3-button bar.
-  // Minimum bottom padding of 12dp keeps spacing on phones without insets.
-  const bottomInset = Math.max(insets.bottom, Platform.OS === "android" ? 12 : 0);
+  // Strategy: always add a fixed 16dp "lift" ON TOP of the OS-reported bottom inset.
+  // On Samsung One UI specifically, when 3-button navigation is enabled some
+  // older Android versions report inset.bottom = 0 even though the nav bar
+  // overlays content; the floor of 28dp on Android guarantees visibility.
+  const osInset = insets.bottom;
+  const extraLift = 16;
+  const minAndroid = 28;
+  const bottomPadding =
+    Platform.OS === "android"
+      ? Math.max(osInset + extraLift, minAndroid)
+      : osInset + extraLift;
   return (
     <Tabs
       screenOptions={{
@@ -24,9 +33,9 @@ export default function TabsLayout() {
           borderTopWidth: 0.5,
           borderTopColor: "rgba(212,175,55,0.18)",
           backgroundColor: Platform.OS === "android" ? "rgba(10,10,10,0.96)" : "transparent",
-          height: 64 + bottomInset,
+          height: 60 + bottomPadding,
           paddingTop: 8,
-          paddingBottom: bottomInset,
+          paddingBottom: bottomPadding,
           elevation: 0,
         },
         tabBarBackground: () =>
