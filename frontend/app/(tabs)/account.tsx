@@ -164,6 +164,18 @@ export default function Account() {
                     <Feather name="chrome" size={16} color={theme.color.onSurface} />
                     <Text style={styles.googleTxt}>{t("signInGoogle")}</Text>
                   </Pressable>
+
+                  {/* Staff-only entry to the in-app admin login. Discreet, no scary copy. */}
+                  <Pressable
+                    testID="staff-access-btn"
+                    onPress={() => router.push("/admin")}
+                    style={styles.staffAccessBtn}
+                  >
+                    <Feather name="shield" size={13} color={theme.color.brand} />
+                    <Text style={styles.staffAccessTxt}>
+                      {lang === "fr" ? "Accès admin / Staff" : "Admin / Staff access"}
+                    </Text>
+                  </Pressable>
                 </>
               ) : (
                 <>
@@ -360,6 +372,8 @@ const styles = StyleSheet.create({
   langBtnRound: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: theme.color.borderStrong, alignItems: "center", justifyContent: "center" },
   langTxt: { color: theme.color.brand, fontSize: 11, fontWeight: "700", letterSpacing: 1 },
   googleBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, height: 54, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.borderStrong, backgroundColor: "rgba(255,255,255,0.04)" },
+  staffAccessBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: theme.space.lg, paddingVertical: 12, paddingHorizontal: 18, borderRadius: 999, borderWidth: 1, borderColor: "rgba(212,175,55,0.35)", backgroundColor: "rgba(212,175,55,0.05)", alignSelf: "center" },
+  staffAccessTxt: { color: theme.color.brand, fontSize: 12, fontWeight: "600", letterSpacing: 1.5 },
   googleTxt: { color: theme.color.onSurface, fontSize: 15, fontWeight: "500" },
   dividerRow: { flexDirection: "row", alignItems: "center", marginVertical: theme.space.xl, gap: 12 },
   line: { flex: 1, height: 1, backgroundColor: theme.color.border },
