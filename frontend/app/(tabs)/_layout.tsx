@@ -2,11 +2,16 @@ import { Tabs } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { Platform, StyleSheet, View } from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { theme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 
 export default function TabsLayout() {
   const { t } = useI18n();
+  const insets = useSafeAreaInsets();
+  // Ensure the tab bar always clears the Android navigation gesture bar / 3-button bar.
+  // Minimum bottom padding of 12dp keeps spacing on phones without insets.
+  const bottomInset = Math.max(insets.bottom, Platform.OS === "android" ? 12 : 0);
   return (
     <Tabs
       screenOptions={{
@@ -19,8 +24,9 @@ export default function TabsLayout() {
           borderTopWidth: 0.5,
           borderTopColor: "rgba(212,175,55,0.18)",
           backgroundColor: Platform.OS === "android" ? "rgba(10,10,10,0.96)" : "transparent",
-          height: 78,
+          height: 64 + bottomInset,
           paddingTop: 8,
+          paddingBottom: bottomInset,
           elevation: 0,
         },
         tabBarBackground: () =>
