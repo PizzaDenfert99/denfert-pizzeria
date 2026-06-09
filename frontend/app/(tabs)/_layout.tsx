@@ -15,8 +15,8 @@ export default function TabsLayout() {
   // older Android versions report inset.bottom = 0 even though the nav bar
   // overlays content; the floor of 28dp on Android guarantees visibility.
   const osInset = insets.bottom;
-  const extraLift = 16;
-  const minAndroid = 28;
+  const extraLift = 20;
+  const minAndroid = 36;
   const bottomPadding =
     Platform.OS === "android"
       ? Math.max(osInset + extraLift, minAndroid)

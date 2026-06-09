@@ -9,6 +9,7 @@ import { useAuth } from "@/src/auth-context";
 import { useI18n } from "@/src/i18n";
 import { api } from "@/src/api";
 import { theme } from "@/src/theme";
+import MobileOnlyAdmin from "@/src/components/mobile-only-admin";
 
 const REWARDS = [
   { key: "coffee", fr: "Café offert", en: "Free coffee", count: 3, icon: "coffee" as const },
@@ -193,6 +194,11 @@ export default function AdminPanel() {
   };
 
   // ===== Not logged in or not admin: show admin login =====
+  if (Platform.OS === "web") {
+    // Loyalty management is mobile-only. Block the web entry point entirely
+    // (placed AFTER all hooks to comply with React Hooks rules).
+    return <MobileOnlyAdmin />;
+  }
   if (loading) {
     return <View style={styles.container}><ActivityIndicator color={theme.color.brand} style={{ flex: 1 }} /></View>;
   }
@@ -597,3 +603,4 @@ const styles = StyleSheet.create({
   toast: { position: "absolute", bottom: 30, left: 20, right: 20, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: theme.radius.md, backgroundColor: theme.color.surfaceTertiary, borderWidth: 1, borderColor: theme.color.brand },
   toastTxt: { color: theme.color.onSurface, fontSize: 13, fontWeight: "500" },
 });
+

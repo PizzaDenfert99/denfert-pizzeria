@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable, RefreshControl } from "react-native";
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable, RefreshControl, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -9,6 +9,7 @@ import { useAuth } from "@/src/auth-context";
 import { useI18n } from "@/src/i18n";
 import { api } from "@/src/api";
 import { theme } from "@/src/theme";
+import MobileOnlyAdmin from "@/src/components/mobile-only-admin";
 
 type Period = "today" | "week" | "month" | "all";
 
@@ -44,6 +45,8 @@ export default function AdminStats() {
   }, [lang]);
 
   useEffect(() => { if (user && user.is_admin) { setFetching(true); load(period); } }, [user, period, load]);
+
+  if (Platform.OS === "web") return <MobileOnlyAdmin />;
 
   if (loading || (fetching && !data)) {
     return <View style={styles.container}><ActivityIndicator color={theme.color.brand} style={{ flex: 1 }} /></View>;

@@ -12,6 +12,7 @@
     "lint": "expo lint"
   },
   "dependencies": {
+    "@expo-google-fonts/dancing-script": "^0.4.2",
     "@expo-google-fonts/playfair-display": "^0.4.2",
     "@expo/metro-runtime": "6.1.2",
     "@expo/ngrok": "4.1.3",
