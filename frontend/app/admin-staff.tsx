@@ -8,7 +8,6 @@ import { useAuth } from "@/src/auth-context";
 import { useI18n } from "@/src/i18n";
 import { api } from "@/src/api";
 import { theme } from "@/src/theme";
-import MobileOnlyAdmin from "@/src/components/mobile-only-admin";
 
 const ROLES = [
   { key: "owner", fr: "Propriétaire", en: "Owner", icon: "star" as const },
@@ -67,8 +66,6 @@ export default function AdminStaff() {
   useEffect(() => {
     if (user && user.is_admin) loadStaff();
   }, [user, loadStaff]);
-
-  if (Platform.OS === "web") return <MobileOnlyAdmin />;
 
   if (loading) {
     return <View style={styles.container}><ActivityIndicator color={theme.color.brand} style={{ flex: 1 }} /></View>;

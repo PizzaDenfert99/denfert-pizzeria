@@ -251,7 +251,7 @@ export default function Account() {
               <Text style={styles.bigCount}>{pc}</Text>
               <Text style={styles.bigCountLbl}>{lang === "fr" ? "pizzas achetées" : "pizzas purchased"}</Text>
             </View>
-            {user.is_admin && Platform.OS !== "web" && (
+            {user.is_admin && (
               <Pressable testID="admin-panel-btn" onPress={() => router.push("/admin")} style={styles.adminBtn}>
                 <Feather name="shield" size={14} color={theme.color.brand} />
                 <Text style={styles.adminBtnTxt}>{lang === "fr" ? "Panneau admin" : "Admin panel"}</Text>
