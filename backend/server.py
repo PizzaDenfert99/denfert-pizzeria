@@ -12,7 +12,13 @@ import httpx, bcrypt, jwt
 ROOT = Path(__file__).parent
 load_dotenv(ROOT / ".env")
 
-client = AsyncIOMotorClient(os.environ["MONGO_URL"])
+client = AsyncIOMotorClient(
+    os.environ["MONGO_URL"],
+    serverSelectionTimeoutMS=10000,
+    connectTimeoutMS=10000,
+    socketTimeoutMS=20000,
+    retryWrites=True,
+)
 db = client[os.environ["DB_NAME"]]
 JWT_SECRET = os.environ["JWT_SECRET"]
 
@@ -20,6 +26,27 @@ app = FastAPI(title="Pizza Denfert API")
 api = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("denfert")
+
+
+# ---- Health-check endpoints (Kubernetes liveness / readiness probes) ----
+# These are mounted at the app level (NOT under /api) so that probes hitting
+# the root path receive 200 OK instead of 404. The repeated container restart
+# loop observed in production was caused by K8s marking the pod unhealthy when
+# `GET /` returned 404. The /api/* routes are unchanged and still proxy through
+# Nginx for browser traffic.
+@app.get("/")
+async def root():
+    return {"status": "ok", "service": "Pizza Denfert API"}
+
+
+@app.get("/healthz")
+async def healthz():
+    return {"status": "ok"}
+
+
+@app.get("/api/healthz")
+async def api_healthz():
+    return {"status": "ok"}
 
 def now(): return datetime.now(timezone.utc)
 def hp(p): return bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
@@ -141,27 +168,37 @@ async def startup():
     # Ensure email index is partial so multiple users with email=None / missing are allowed (phone-only OTP users).
     # NOTE: a plain `sparse` index still indexes explicit null values; only documents missing the field are
     # skipped. We need a partialFilterExpression to actually exclude null/non-string emails.
+    # All of this is wrapped in broad try/except so a transient Atlas connectivity blip at boot does
+    # NOT crash the process — that would trigger Kubernetes restart loops and health-probe failures.
     try:
         existing = await db.users.index_information()
         if "email_1" in existing:
             opts = existing["email_1"]
             has_partial = "partialFilterExpression" in opts
             if not has_partial:
-                await db.users.drop_index("email_1")
+                try:
+                    await db.users.drop_index("email_1")
+                except Exception as _drop_err:
+                    log.warning(f"could not drop legacy email_1 index: {_drop_err}")
     except Exception as _e:
         log.warning(f"index check failed: {_e}")
-    await db.users.create_index(
-        "email",
-        unique=True,
-        partialFilterExpression={"email": {"$type": "string"}},
-    )
-    await db.users.create_index("user_id", unique=True)
-    await db.users.create_index("phone", sparse=True)
-    await db.user_sessions.create_index("session_token", unique=True)
+    for _name, _coro in (
+        ("email", db.users.create_index("email", unique=True, partialFilterExpression={"email": {"$type": "string"}})),
+        ("user_id", db.users.create_index("user_id", unique=True)),
+        ("phone", db.users.create_index("phone", sparse=True)),
+        ("session_token", db.user_sessions.create_index("session_token", unique=True)),
+    ):
+        try:
+            await _coro
+        except Exception as _idx_err:
+            log.warning(f"create_index({_name}) skipped: {_idx_err}")
     # Always replace menu on startup to reflect updates
-    await db.menu.delete_many({})
-    await db.menu.insert_many([dict(m) for m in SEED])
-    log.info(f"Seeded {len(SEED)} menu items")
+    try:
+        await db.menu.delete_many({})
+        await db.menu.insert_many([dict(m) for m in SEED])
+        log.info(f"Seeded {len(SEED)} menu items")
+    except Exception as _seed_err:
+        log.warning(f"menu seed skipped: {_seed_err}")
     if not await db.users.find_one({"email": "admin@pizzadenfert.fr"}):
         await db.users.insert_one({
             "user_id": "admin_" + secrets.token_hex(6),
@@ -811,7 +848,7 @@ async def admin_dashboard(period: str = "all", authorization: Optional[str] = He
 
 
 @api.get("/")
-async def root(): return {"service": "Pizza Denfert API", "status": "ok"}
+async def api_root(): return {"service": "Pizza Denfert API", "status": "ok"}
 
 app.include_router(api)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
