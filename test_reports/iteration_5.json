@@ -1,0 +1,79 @@
+{
+  "summary": "Iteration 5 backend testing complete for the reservation zones + admin capacity feature. Wrote /app/backend/tests/test_reservations_zones_iter5.py (22 new tests across 7 test classes covering A-G from the review request). Executed pytest against the local backend (http://localhost:8001) covering both new and existing suites — 93/93 tests pass (22 new + 71 existing regression). Capacity is snapshotted/restored at module teardown so subsequent runs start clean. No backend defects discovered.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_reservations_zones_iter5.py",
+    "/app/test_reports/pytest/pytest_results_iter5.xml"
+  ],
+  "test_results": {
+    "new_iter5_tests": {
+      "total": 22,
+      "passed": 22,
+      "failed": 0,
+      "per_section": {
+        "A_default_capacity_seed": {"passed": 1, "failed": 0},
+        "B_zone_math_indoor_fills_terrace_untouched": {"passed": 1, "failed": 0},
+        "C_terrace_fills_indoor_open_independence": {"passed": 1, "failed": 0},
+        "D_validation_zone_guests_overcap": {"passed": 5, "failed": 0},
+        "E_admin_capacity_endpoints": {"passed": 11, "failed": 0},
+        "F_cancelled_reservations_excluded": {"passed": 1, "failed": 0},
+        "G_guest_endpoint_zone_handling_bonus": {"passed": 2, "failed": 0}
+      }
+    },
+    "existing_regression": {
+      "test_admin_flows.py": "26 passed",
+      "test_staff_dashboard_iter3.py": "25 passed",
+      "test_add_pizza_negative_iter4.py": "20 passed",
+      "total_existing": "71/71 passed"
+    },
+    "grand_total": "93/93 passed in 10.97s"
+  },
+  "feature_verification": {
+    "default_capacity_seed_indoor30_terrace20": "VERIFIED",
+    "GET_reservations_availability_returns_per_zone": "VERIFIED",
+    "POST_reservation_zone_defaults_to_indoor": "VERIFIED",
+    "POST_reservation_invalid_zone_400": "VERIFIED",
+    "POST_reservation_guests_0_or_21_returns_400": "VERIFIED",
+    "POST_reservation_over_capacity_returns_409": "VERIFIED",
+    "zone_independence_indoor_and_terrace_separate_counters": "VERIFIED",
+    "GET_admin_settings_capacity_admin_200_customer_403_unauth_401": "VERIFIED",
+    "PUT_admin_settings_capacity_owner_200_persists_echoes_to_availability": "VERIFIED",
+    "PUT_admin_settings_capacity_validates_0..500": "VERIFIED",
+    "PUT_admin_settings_capacity_customer_403": "VERIFIED",
+    "lower_cap_below_existing_bookings_keeps_old_rejects_new": "VERIFIED",
+    "cancelled_status_excluded_from_booked_count": "VERIFIED",
+    "guest_reservation_endpoint_honors_zone": "VERIFIED",
+    "capacity_restored_at_end_of_module": "VERIFIED (indoor=30, terrace=20 after run)"
+  },
+  "action_items": [],
+  "critical_code_review_comments": [
+    "Capacity helper _get_capacity seeds defaults atomically via upsert — good.",
+    "_zone_booked correctly excludes status:'cancelled' via $ne match.",
+    "_ensure_can_book validates zone whitelist and guests range (1..20) before doing DB work — good.",
+    "Admin PUT bounds-check 0..500 is enforced after auth/role check (proper ordering).",
+    "Existing reservations untouched when capacity is lowered (no retroactive cancellation) — confirmed by test E.test_lower_cap_below_existing_bookings_rejects_new."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_reservations_zones_iter5.py (created)",
+    "/app/test_reports/pytest/pytest_results_iter5.xml (created)",
+    "/app/test_reports/iteration_5.json (created)"
+  ],
+  "success_rate": {
+    "backend": "100% (93/93)",
+    "frontend": "N/A — skipped per review request"
+  },
+  "seed_data_creation": "Test creates ephemeral OTP-verified customers (TEST Zones Customer) and reservations on dates 2026-08-01..2026-08-05, 2026-09-09, 2026-09-15, 2026-09-20. Module-scoped autouse fixture pre-cleans those slots before the run and deletes them after, also restoring app_settings.capacity to its pre-test value (indoor=30, terrace=20 in this environment). No production/seed collections (menu, admin user) modified.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend reservation-zones + admin capacity feature is fully covered and green. New tests reuse /app/backend/tests pytest conventions (BASE_URL from EXPO_PUBLIC_BACKEND_URL / EXPO_BACKEND_URL with /api prefix, admin login via email+password, customer via OTP). The iter5 file snapshots capacity at the start of the module and restores it on teardown — if you add new tests that change capacity, do the same. To run only iter5: `python -m pytest backend/tests/test_reservations_zones_iter5.py -v`. Full suite: `python -m pytest backend/tests/ -v`. Frontend was not touched per request.",
+  "rca_of_issue": "N/A — no defects found. Previous iteration_5 dispatch had not actually executed tests; this run wrote the test file and executed pytest with JUnit output. All 22 new + 71 existing tests pass."
+}

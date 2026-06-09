@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
@@ -26,6 +26,9 @@ function nextDays(n: number) {
   return out;
 }
 
+type ZoneAvail = { capacity: number; booked: number; available: number; full: boolean };
+type Availability = { zones: { indoor: ZoneAvail; terrace: ZoneAvail } };
+
 export default function Reserve() {
   const { t, lang } = useI18n();
   const router = useRouter();
@@ -33,6 +36,8 @@ export default function Reserve() {
   const [date, setDate] = useState(nextDays(14)[0].iso);
   const [time, setTime] = useState("20:00");
   const [guests, setGuests] = useState(2);
+  const [zone, setZone] = useState<"indoor" | "terrace">("indoor");
+  const [availability, setAvailability] = useState<Availability | null>(null);
   const [name, setName] = useState(user?.name || "");
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
@@ -40,16 +45,44 @@ export default function Reserve() {
   const [done, setDone] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  // Refresh availability whenever date/time changes; auto-flip to the other zone if the current pick is full.
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const a = await api.reservationAvailability(date, time);
+        if (!alive) return;
+        setAvailability(a);
+        const z = a?.zones;
+        if (z && z[zone]?.full && !z[zone === "indoor" ? "terrace" : "indoor"]?.full) {
+          setZone(zone === "indoor" ? "terrace" : "indoor");
+        }
+      } catch {
+        if (alive) setAvailability(null);
+      }
+    })();
+    return () => { alive = false; };
+  }, [date, time]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const zInfo = availability?.zones?.[zone];
+  const zoneFull = !!zInfo?.full;
+  const tooManyGuests = !!(zInfo && guests > zInfo.available);
+
   const submit = async () => {
     if (!name || !phone) { setErr(lang === "fr" ? "Nom et téléphone requis" : "Name and phone required"); return; }
+    if (zoneFull) { setErr(lang === "fr" ? "Cette zone est complète, choisissez l'autre." : "This zone is full, choose the other one."); return; }
+    if (tooManyGuests) { setErr(lang === "fr" ? `Il ne reste que ${zInfo?.available} place(s) dans cette zone.` : `Only ${zInfo?.available} seat(s) left in this zone.`); return; }
     setErr(null);
     setLoading(true);
     try {
-      if (user) await api.createReservation({ date, time, guests, name, phone, notes });
-      else await api.createGuestReservation({ date, time, guests, name, phone, notes });
+      const payload = { date, time, guests, zone, name, phone, notes };
+      if (user) await api.createReservation(payload);
+      else await api.createGuestReservation(payload);
       setDone(true);
     } catch (e: any) {
-      setErr(e?.message || "Error");
+      const msg = e?.message || "";
+      if (msg.includes("409")) setErr(lang === "fr" ? "Désolé, la zone vient d'être complète." : "Sorry, this zone just filled up.");
+      else setErr(msg || "Error");
     } finally {
       setLoading(false);
     }
@@ -65,7 +98,7 @@ export default function Reserve() {
           <Text style={[styles.title, { marginTop: theme.space.xl, textAlign: "center" }]}>{t("reservationConfirmed")}</Text>
           <Text style={[styles.body, { textAlign: "center", marginTop: theme.space.md }]}>{t("seeYou")}</Text>
           <Text style={[styles.body, { textAlign: "center", color: theme.color.brand, marginTop: theme.space.lg }]}>
-            {date} · {time} · {guests} {lang === "fr" ? "convives" : "guests"}
+            {date} · {time} · {guests} {lang === "fr" ? "convives" : "guests"} · {zone === "indoor" ? (lang === "fr" ? "Intérieur" : "Indoor") : (lang === "fr" ? "Terrasse" : "Terrace")}
           </Text>
           <Pressable testID="back-home-btn" onPress={() => { setDone(false); router.replace("/(tabs)"); }} style={[styles.submit, { marginTop: theme.space.xxl }]}>
             <Text style={styles.submitTxt}>{t("backHome")}</Text>
@@ -74,6 +107,40 @@ export default function Reserve() {
       </View>
     );
   }
+
+  const renderZoneCard = (key: "indoor" | "terrace") => {
+    const z = availability?.zones?.[key];
+    const isFull = !!z?.full;
+    const isSelected = zone === key;
+    const label = key === "indoor"
+      ? (lang === "fr" ? "Restaurant intérieur" : "Indoor restaurant")
+      : (lang === "fr" ? "Terrasse" : "Terrace");
+    const icon = key === "indoor" ? "home" : "sun";
+    return (
+      <Pressable
+        key={key}
+        testID={`zone-${key}`}
+        disabled={isFull}
+        onPress={() => setZone(key)}
+        style={[styles.zoneCard, isSelected && !isFull && styles.zoneCardActive, isFull && styles.zoneCardFull]}
+      >
+        <View style={styles.zoneIcon}>
+          <Feather name={icon as any} size={18} color={isFull ? theme.color.muted : isSelected ? theme.color.onBrandPrimary : theme.color.brand} />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={[styles.zoneName, isFull && styles.zoneNameFull, isSelected && !isFull && styles.zoneNameActive]}>{label}</Text>
+          <Text style={[styles.zoneSub, isFull && styles.zoneSubFull]}>
+            {!z ? "—" : isFull ? (lang === "fr" ? "Complet" : "Full") : (lang === "fr" ? `${z.available} place${z.available > 1 ? "s" : ""} restante${z.available > 1 ? "s" : ""}` : `${z.available} seat${z.available > 1 ? "s" : ""} left`)}
+          </Text>
+        </View>
+        {isFull ? (
+          <View style={styles.fullTag}><Text style={styles.fullTagTxt}>{lang === "fr" ? "COMPLET" : "FULL"}</Text></View>
+        ) : isSelected ? (
+          <Feather name="check-circle" size={18} color={theme.color.onBrandPrimary} />
+        ) : null}
+      </Pressable>
+    );
+  };
 
   return (
     <View testID="reserve-screen" style={styles.container}>
@@ -92,12 +159,7 @@ export default function Reserve() {
             <Text style={styles.label}>{t("date")}</Text>
             <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={{ gap: 8, paddingVertical: 4 }}>
               {nextDays(14).map((d) => (
-                <Pressable
-                  key={d.iso}
-                  testID={`date-${d.iso}`}
-                  onPress={() => setDate(d.iso)}
-                  style={[styles.dateChip, date === d.iso && styles.dateChipActive]}
-                >
+                <Pressable key={d.iso} testID={`date-${d.iso}`} onPress={() => setDate(d.iso)} style={[styles.dateChip, date === d.iso && styles.dateChipActive]}>
                   <Text style={[styles.dateDay, date === d.iso && { color: theme.color.brand }]}>{d.day}</Text>
                   <Text style={[styles.dateNum, date === d.iso && { color: theme.color.brand }]}>{d.date}</Text>
                 </Pressable>
@@ -122,6 +184,11 @@ export default function Reserve() {
               ))}
             </View>
 
+            <Text style={[styles.label, { marginTop: theme.space.xl }]}>{lang === "fr" ? "ZONE" : "ZONE"}</Text>
+            {renderZoneCard("indoor")}
+            <View style={{ height: 8 }} />
+            {renderZoneCard("terrace")}
+
             <Text style={[styles.label, { marginTop: theme.space.xl }]}>{t("guests")}</Text>
             <View style={styles.guestsRow}>
               <Pressable testID="guests-minus" onPress={() => setGuests(Math.max(1, guests - 1))} style={styles.guestBtn}>
@@ -139,8 +206,10 @@ export default function Reserve() {
 
             {err && <Text style={styles.err}>{err}</Text>}
 
-            <Pressable testID="reserve-submit-btn" onPress={submit} disabled={loading} style={styles.submit}>
-              {loading ? <ActivityIndicator color={theme.color.onBrandPrimary} /> : <Text style={styles.submitTxt}>{t("confirmReservation")}</Text>}
+            <Pressable testID="reserve-submit-btn" onPress={submit} disabled={loading || zoneFull} style={[styles.submit, (loading || zoneFull) && { opacity: 0.6 }]}>
+              {loading ? <ActivityIndicator color={theme.color.onBrandPrimary} /> : (
+                <Text style={styles.submitTxt}>{zoneFull ? (lang === "fr" ? "Zone complète" : "Zone full") : t("confirmReservation")}</Text>
+              )}
             </Pressable>
           </View>
         </ScrollView>
@@ -166,6 +235,17 @@ const styles = StyleSheet.create({
   timeChip: { paddingHorizontal: 14, height: 36, borderRadius: 999, borderWidth: 1, borderColor: theme.color.border, alignItems: "center", justifyContent: "center" },
   timeChipActive: { borderColor: theme.color.brand, backgroundColor: "rgba(212,175,55,0.1)" },
   timeTxt: { color: theme.color.onSurfaceTertiary, fontSize: 13, fontWeight: "500" },
+  zoneCard: { flexDirection: "row", alignItems: "center", gap: 12, padding: 14, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surfaceSecondary },
+  zoneCardActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
+  zoneCardFull: { opacity: 0.55, borderColor: "rgba(255,255,255,0.06)" },
+  zoneIcon: { width: 38, height: 38, borderRadius: 19, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
+  zoneName: { color: theme.color.onSurface, fontSize: 15, fontWeight: "500" },
+  zoneNameActive: { color: theme.color.onBrandPrimary },
+  zoneNameFull: { color: theme.color.muted },
+  zoneSub: { color: theme.color.onSurfaceTertiary, fontSize: 11, marginTop: 2 },
+  zoneSubFull: { color: theme.color.muted },
+  fullTag: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 4, borderWidth: 1, borderColor: theme.color.error },
+  fullTagTxt: { color: theme.color.error, fontSize: 9, fontWeight: "700", letterSpacing: 1 },
   guestsRow: { flexDirection: "row", alignItems: "center", gap: 24 },
   guestBtn: { width: 44, height: 44, borderRadius: 22, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
   guestsNum: { color: theme.color.onSurface, fontSize: 32, fontWeight: "300", minWidth: 50, textAlign: "center" },

@@ -358,6 +358,10 @@ export default function AdminPanel() {
                   <Feather name="users" size={14} color={theme.color.brand} />
                   <Text style={styles.secondaryTxt}>{lang === "fr" ? "Personnel" : "Staff"}</Text>
                 </Pressable>
+                <Pressable testID="open-settings-btn" onPress={() => router.push("/admin-settings")} style={styles.secondaryBtn}>
+                  <Feather name="sliders" size={14} color={theme.color.brand} />
+                  <Text style={styles.secondaryTxt}>{lang === "fr" ? "Paramètres" : "Settings"}</Text>
+                </Pressable>
               </View>
             </View>
           )}

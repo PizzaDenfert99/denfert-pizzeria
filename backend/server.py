@@ -43,6 +43,10 @@ class OtpVerifyIn(BaseModel):
     name: Optional[str] = None
 class ResIn(BaseModel):
     date: str; time: str; guests: int; name: str; phone: str; notes: Optional[str] = None
+    zone: str = "indoor"  # "indoor" | "terrace"
+class CapacityIn(BaseModel):
+    indoor: int
+    terrace: int
 class PurchaseIn(BaseModel):
     pizza_count: int = 1  # admin records pizza purchase for loyalty
 class RedeemIn(BaseModel):
@@ -279,25 +283,101 @@ async def menu():
     return await db.menu.find({}, {"_id": 0}).to_list(500)
 
 # Reservations
+DEFAULT_CAPACITY = {"indoor": 30, "terrace": 20}
+VALID_ZONES = ("indoor", "terrace")
+
+
+async def _get_capacity() -> dict:
+    """Return current per-zone seat capacity, seeding defaults on first call."""
+    doc = await db.app_settings.find_one({"key": "capacity"}, {"_id": 0})
+    if doc:
+        return {
+            "indoor": int(doc.get("indoor", DEFAULT_CAPACITY["indoor"])),
+            "terrace": int(doc.get("terrace", DEFAULT_CAPACITY["terrace"])),
+        }
+    await db.app_settings.update_one(
+        {"key": "capacity"},
+        {"$set": {"key": "capacity", **DEFAULT_CAPACITY, "updated_at": now()}},
+        upsert=True,
+    )
+    return dict(DEFAULT_CAPACITY)
+
+
+async def _zone_booked(date: str, time: str, zone: str) -> int:
+    """Sum of guests booked for (date, time, zone). Cancelled reservations excluded."""
+    agg = await db.reservations.aggregate([
+        {"$match": {"date": date, "time": time, "zone": zone, "status": {"$ne": "cancelled"}}},
+        {"$group": {"_id": None, "total": {"$sum": "$guests"}}},
+    ]).to_list(1)
+    return int(agg[0]["total"]) if agg else 0
+
+
+async def _ensure_can_book(date: str, time: str, zone: str, guests: int) -> dict:
+    if zone not in VALID_ZONES:
+        raise HTTPException(400, "Invalid zone")
+    if guests < 1 or guests > 20:
+        raise HTTPException(400, "Invalid guests")
+    cap = await _get_capacity()
+    booked = await _zone_booked(date, time, zone)
+    if booked + guests > cap[zone]:
+        raise HTTPException(409, f"Zone {zone} full for this slot")
+    return cap
+
+
+@api.get("/reservations/availability")
+async def reservations_availability(date: str, time: str):
+    """Per-zone availability for a (date, time) slot. Public — used by the reservation form."""
+    cap = await _get_capacity()
+    out: dict = {"date": date, "time": time, "zones": {}}
+    for z in VALID_ZONES:
+        booked = await _zone_booked(date, time, z)
+        available = max(0, cap[z] - booked)
+        out["zones"][z] = {"capacity": cap[z], "booked": booked, "available": available, "full": available <= 0}
+    return out
+
+
 @api.post("/reservations")
 async def create_res(b: ResIn, authorization: Optional[str] = Header(None)):
     u = await cu(authorization)
+    await _ensure_can_book(b.date, b.time, b.zone, b.guests)
     r = {"id": str(uuid.uuid4()), "user_id": u["user_id"], "user_name": u["name"],
-         "user_email": u["email"], "date": b.date, "time": b.time, "guests": b.guests,
-         "name": b.name, "phone": b.phone, "notes": b.notes or "", "status": "confirmed",
-         "created_at": now()}
+         "user_email": u.get("email"), "date": b.date, "time": b.time, "guests": b.guests,
+         "zone": b.zone, "name": b.name, "phone": b.phone, "notes": b.notes or "",
+         "status": "confirmed", "created_at": now()}
     await db.reservations.insert_one(dict(r))
     r.pop("_id", None)
     return r
 
 @api.post("/reservations/guest")
 async def guest_res(b: ResIn):
+    await _ensure_can_book(b.date, b.time, b.zone, b.guests)
     r = {"id": str(uuid.uuid4()), "user_id": None, "user_name": b.name, "user_email": None,
-         "date": b.date, "time": b.time, "guests": b.guests, "name": b.name, "phone": b.phone,
-         "notes": b.notes or "", "status": "confirmed", "created_at": now()}
+         "date": b.date, "time": b.time, "guests": b.guests, "zone": b.zone,
+         "name": b.name, "phone": b.phone, "notes": b.notes or "",
+         "status": "confirmed", "created_at": now()}
     await db.reservations.insert_one(dict(r))
     r.pop("_id", None)
     return r
+
+
+@api.get("/admin/settings/capacity")
+async def admin_get_capacity(authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    return await _get_capacity()
+
+
+@api.put("/admin/settings/capacity")
+async def admin_update_capacity(b: CapacityIn, authorization: Optional[str] = Header(None)):
+    me_admin = await _require_admin(authorization)
+    _check_can_manage(me_admin)
+    if b.indoor < 0 or b.indoor > 500 or b.terrace < 0 or b.terrace > 500:
+        raise HTTPException(400, "Capacity must be between 0 and 500")
+    await db.app_settings.update_one(
+        {"key": "capacity"},
+        {"$set": {"key": "capacity", "indoor": int(b.indoor), "terrace": int(b.terrace), "updated_at": now()}},
+        upsert=True,
+    )
+    return {"indoor": int(b.indoor), "terrace": int(b.terrace)}
 
 @api.get("/reservations/me")
 async def my_res(authorization: Optional[str] = Header(None)):

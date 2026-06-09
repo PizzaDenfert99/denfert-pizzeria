@@ -42,6 +42,8 @@ export const api = {
   menu: () => req("/menu"),
   createReservation: (data: any) => req("/reservations", { method: "POST", body: JSON.stringify(data) }),
   createGuestReservation: (data: any) => req("/reservations/guest", { method: "POST", body: JSON.stringify(data) }),
+  reservationAvailability: (date: string, time: string) =>
+    req(`/reservations/availability?date=${encodeURIComponent(date)}&time=${encodeURIComponent(time)}`),
   myReservations: () => req("/reservations/me"),
   loyalty: () => req("/loyalty/me"),
   redeem: (reward: string) => req("/loyalty/redeem", { method: "POST", body: JSON.stringify({ reward }) }),
@@ -62,6 +64,9 @@ export const api = {
     req(`/admin/staff/${encodeURIComponent(user_id)}/disable`, { method: "PATCH", body: JSON.stringify({ disabled }) }),
   adminDeleteStaff: (user_id: string) =>
     req(`/admin/staff/${encodeURIComponent(user_id)}`, { method: "DELETE" }),
+  adminGetCapacity: () => req("/admin/settings/capacity"),
+  adminUpdateCapacity: (indoor: number, terrace: number) =>
+    req("/admin/settings/capacity", { method: "PUT", body: JSON.stringify({ indoor, terrace }) }),
 };
 
 export { BASE };
