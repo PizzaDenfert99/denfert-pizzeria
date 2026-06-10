@@ -157,7 +157,6 @@ export default function MenuScreen() {
                 {!!item.image && (
                   <View style={styles.imgWrap}>
                     <Image source={item.image} style={styles.cardImg} contentFit="cover" />
-                    <LinearGradient colors={["transparent", "rgba(5,5,5,0.9)"]} style={StyleSheet.absoluteFillObject} />
                   </View>
                 )}
                 <View style={styles.cardBody}>
