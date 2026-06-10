@@ -1,28 +1,117 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, FlatList, Pressable } from "react-native";
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, FlatList, Pressable, RefreshControl } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useI18n } from "@/src/i18n";
 import { api } from "@/src/api";
 import { theme } from "@/src/theme";
+import { isSupabaseConfigured, fetchActiveCategories, fetchActiveMenuItems, type Category, type MenuItem } from "@/src/lib/supabase";
 
-const CATS = ["pizzas", "focaccias", "gratins", "salades", "desserts", "boissons", "vins"] as const;
-type Cat = typeof CATS[number];
+// Unified shape used by the renderer (works for both Supabase and legacy FastAPI rows).
+type Row = {
+  id: string;
+  name: string;
+  desc?: string | null;
+  ingredients?: string | null;
+  image?: string;
+  // Either a single `price` (number) OR a `prices` map (e.g. { "26": 10.9, "31": 13.9 }).
+  price?: number | null;
+  prices?: Record<string, number> | null;
+  category_slug: string; // slug used by chips
+};
+
+const LEGACY_FALLBACK_CATS = [
+  { id: "pizzas", slug: "pizzas", name: "Pizzas", sort_order: 1 },
+  { id: "focaccias", slug: "focaccias", name: "Focaccias", sort_order: 2 },
+  { id: "gratins", slug: "gratins", name: "Gratins", sort_order: 3 },
+  { id: "salades", slug: "salades", name: "Salades", sort_order: 4 },
+  { id: "desserts", slug: "desserts", name: "Desserts", sort_order: 5 },
+  { id: "boissons", slug: "boissons", name: "Boissons", sort_order: 6 },
+  { id: "vins", slug: "vins", name: "Vins", sort_order: 7 },
+];
 
 export default function MenuScreen() {
   const { t, lang } = useI18n();
-  const [items, setItems] = useState<any[]>([]);
-  const [cat, setCat] = useState<Cat>("pizzas");
+  const [rows, setRows] = useState<Row[]>([]);
+  const [cats, setCats] = useState<{ id: string; slug: string; name: string; sort_order: number }[]>(LEGACY_FALLBACK_CATS);
+  const [cat, setCat] = useState<string>("pizzas");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [source, setSource] = useState<"supabase" | "fastapi" | "loading">("loading");
 
   const load = useCallback(async () => {
     setLoading(true);
-    try { setItems(await api.menu()); } finally { setLoading(false); }
-  }, []);
+    // --- 1. Try Supabase first (if env vars are set) ---
+    if (isSupabaseConfigured()) {
+      try {
+        const [sbCats, sbItems] = await Promise.all([fetchActiveCategories(), fetchActiveMenuItems()]);
+        if (sbCats.length > 0 || sbItems.length > 0) {
+          const catList = (sbCats as Category[]).map((c) => ({ id: c.id, slug: c.slug, name: c.name, sort_order: c.sort_order }));
+          // Build slug index by category id for items
+          const slugById = new Map<string, string>();
+          (sbCats as Category[]).forEach((c) => slugById.set(c.id, c.slug));
+          const list: Row[] = (sbItems as MenuItem[]).map((it) => ({
+            id: it.id,
+            name: it.name,
+            desc: it.description,
+            ingredients: (it.ingredients || []).join(", ") || null,
+            image: it.image_url || undefined,
+            // Reconstruct: pizzas (slug=pizzas) have 26/31 prices; others use `default` or first numeric.
+            prices: it.prices && Object.keys(it.prices).some((k) => k !== "default") ? it.prices : null,
+            price: it.prices?.default ?? (typeof it.prices === "object" ? Object.values(it.prices || {})[0] : null) ?? null,
+            category_slug: (it.category_id && slugById.get(it.category_id)) || "pizzas",
+          }));
+          setCats(catList.sort((a, b) => a.sort_order - b.sort_order));
+          setRows(list);
+          // Default selected chip = first category that has items, else first chip
+          if (catList.length > 0) {
+            const firstWithItems = catList.sort((a, b) => a.sort_order - b.sort_order).find((c) => list.some((r) => r.category_slug === c.slug));
+            setCat((prev) => (list.some((r) => r.category_slug === prev) ? prev : (firstWithItems?.slug ?? catList[0].slug)));
+          }
+          setSource("supabase");
+          setLoading(false);
+          return;
+        }
+        // Supabase reachable but tables empty → fall through to legacy as soft fallback.
+        console.warn("Supabase reachable but no menu rows — falling back to FastAPI seed.");
+      } catch (e) {
+        console.warn("Supabase fetch failed, falling back to FastAPI:", e);
+      }
+    }
+    // --- 2. Legacy FastAPI fallback ---
+    try {
+      const items = await api.menu();
+      const list: Row[] = (items || []).map((m: any) => ({
+        id: m.id,
+        name: m.name,
+        desc: lang === "fr" ? m.desc_fr : m.desc_en,
+        ingredients: lang === "fr" ? m.ingredients_fr : m.ingredients_en,
+        image: m.image,
+        price: typeof m.price === "number" ? m.price : null,
+        prices: m.prices || null,
+        category_slug: m.category,
+      }));
+      setCats(LEGACY_FALLBACK_CATS);
+      setRows(list);
+      setSource("fastapi");
+    } catch (e) {
+      console.error("Both Supabase and FastAPI failed", e);
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [lang]);
+
   useEffect(() => { load(); }, [load]);
 
-  const filtered = useMemo(() => items.filter((i) => i.category === cat), [items, cat]);
+  const filtered = useMemo(() => rows.filter((r) => r.category_slug === cat), [rows, cat]);
+
+  // Localised category label fallback (i18n keys exist for the canonical 7 slugs).
+  const labelFor = (c: { slug: string; name: string }) => {
+    try { const k = `categories.${c.slug}` as any; const v = t(k); if (v && v !== k) return v; } catch {}
+    return c.name;
+  };
 
   return (
     <View testID="menu-screen" style={styles.container}>
@@ -35,9 +124,9 @@ export default function MenuScreen() {
           contentContainerStyle={styles.chipsRow}
           style={styles.chipsScroll}
         >
-          {CATS.map((c) => (
-            <Pressable key={c} testID={`cat-chip-${c}`} onPress={() => setCat(c)} style={[styles.chip, cat === c && styles.chipActive]}>
-              <Text style={[styles.chipTxt, cat === c && styles.chipTxtActive]}>{t(`categories.${c}`)}</Text>
+          {cats.map((c) => (
+            <Pressable key={c.slug} testID={`cat-chip-${c.slug}`} onPress={() => setCat(c.slug)} style={[styles.chip, cat === c.slug && styles.chipActive]}>
+              <Text style={[styles.chipTxt, cat === c.slug && styles.chipTxtActive]}>{labelFor(c)}</Text>
             </Pressable>
           ))}
         </ScrollView>
@@ -47,39 +136,51 @@ export default function MenuScreen() {
         <View style={{ flex: 1, alignItems: "center", justifyContent: "center" }}>
           <ActivityIndicator color={theme.color.brand} />
         </View>
+      ) : filtered.length === 0 ? (
+        <View style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: theme.space.xl }}>
+          <Text style={{ color: theme.color.muted, fontSize: 13, textAlign: "center", fontStyle: "italic" }}>
+            {lang === "fr" ? "Aucun plat dans cette catégorie pour le moment." : "No dishes in this category yet."}
+          </Text>
+        </View>
       ) : (
         <FlatList
           data={filtered}
           keyExtractor={(i) => i.id}
           contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 140, paddingTop: theme.space.md }}
+          refreshControl={<RefreshControl refreshing={refreshing} tintColor={theme.color.brand} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}
           renderItem={({ item }) => {
-            const desc = lang === "fr" ? item.desc_fr : item.desc_en;
-            const ingredients = lang === "fr" ? item.ingredients_fr : item.ingredients_en;
-            const isPizza = item.category === "pizzas" && item.prices;
+            const sizeKeys = item.prices ? Object.keys(item.prices).filter((k) => k !== "default") : [];
+            const showSizes = sizeKeys.length >= 2;
             return (
               <View testID={`menu-item-${item.id}`} style={styles.card}>
-                <View style={styles.imgWrap}>
-                  <Image source={item.image} style={styles.cardImg} contentFit="cover" />
-                  <LinearGradient colors={["transparent", "rgba(5,5,5,0.9)"]} style={StyleSheet.absoluteFillObject} />
-                </View>
+                {!!item.image && (
+                  <View style={styles.imgWrap}>
+                    <Image source={item.image} style={styles.cardImg} contentFit="cover" />
+                    <LinearGradient colors={["transparent", "rgba(5,5,5,0.9)"]} style={StyleSheet.absoluteFillObject} />
+                  </View>
+                )}
                 <View style={styles.cardBody}>
                   <View style={styles.cardHead}>
                     <Text style={styles.itemName}>{item.name}</Text>
-                    {!isPizza && <Text style={styles.price}>{item.price.toFixed(2)} €</Text>}
+                    {!showSizes && typeof item.price === "number" && item.price > 0 && (
+                      <Text style={styles.price}>{item.price.toFixed(2)} €</Text>
+                    )}
                   </View>
-                  <Text style={styles.itemDesc}>{desc}</Text>
-                  <Text style={styles.ingredientsLbl}>{lang === "fr" ? "INGRÉDIENTS" : "INGREDIENTS"}</Text>
-                  <Text style={styles.ingredients}>{ingredients}</Text>
-                  {isPizza && (
+                  {!!item.desc && <Text style={styles.itemDesc}>{item.desc}</Text>}
+                  {!!item.ingredients && (
+                    <>
+                      <Text style={styles.ingredientsLbl}>{lang === "fr" ? "INGRÉDIENTS" : "INGREDIENTS"}</Text>
+                      <Text style={styles.ingredients}>{item.ingredients}</Text>
+                    </>
+                  )}
+                  {showSizes && (
                     <View style={styles.sizesRow}>
-                      <View style={styles.sizeBox}>
-                        <Text style={styles.sizeLbl}>26 cm</Text>
-                        <Text style={styles.sizePrice}>{item.prices["26"].toFixed(2)} €</Text>
-                      </View>
-                      <View style={styles.sizeBox}>
-                        <Text style={styles.sizeLbl}>31 cm</Text>
-                        <Text style={styles.sizePrice}>{item.prices["31"].toFixed(2)} €</Text>
-                      </View>
+                      {sizeKeys.sort().map((k) => (
+                        <View key={k} style={styles.sizeBox}>
+                          <Text style={styles.sizeLbl}>{/^\d+$/.test(k) ? `${k} cm` : k.toUpperCase()}</Text>
+                          <Text style={styles.sizePrice}>{Number(item.prices![k]).toFixed(2)} €</Text>
+                        </View>
+                      ))}
                     </View>
                   )}
                 </View>
@@ -87,6 +188,11 @@ export default function MenuScreen() {
             );
           }}
         />
+      )}
+      {source === "fastapi" && isSupabaseConfigured() === false && __DEV__ && (
+        <Text style={{ position: "absolute", bottom: 90, alignSelf: "center", color: theme.color.muted, fontSize: 10, fontStyle: "italic" }}>
+          source · FastAPI (Supabase non configuré)
+        </Text>
       )}
     </View>
   );
@@ -113,8 +219,8 @@ const styles = StyleSheet.create({
   ingredientsLbl: { color: theme.color.brand, fontSize: 9, letterSpacing: 2, fontWeight: "700", marginTop: 12 },
   ingredients: { color: theme.color.onSurfaceSecondary, fontSize: 13, lineHeight: 19, marginTop: 4 },
   price: { color: theme.color.brand, fontSize: 18, fontWeight: "600" },
-  sizesRow: { flexDirection: "row", gap: 10, marginTop: theme.space.lg },
-  sizeBox: { flex: 1, padding: 12, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center" },
+  sizesRow: { flexDirection: "row", gap: 10, marginTop: theme.space.lg, flexWrap: "wrap" },
+  sizeBox: { flex: 1, minWidth: 100, padding: 12, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center" },
   sizeLbl: { color: theme.color.onSurfaceTertiary, fontSize: 11, letterSpacing: 2, fontWeight: "600" },
   sizePrice: { color: theme.color.brand, fontSize: 18, fontWeight: "600", marginTop: 4 },
 });

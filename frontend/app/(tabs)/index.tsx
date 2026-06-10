@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect, useState } from "react";
 import { View, Text, StyleSheet, ScrollView, Pressable, Image as RNImage, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
@@ -7,6 +7,7 @@ import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { theme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
+import { isSupabaseConfigured, fetchRestaurantSettings } from "@/src/lib/supabase";
 
 const HERO_URI = "https://customer-assets.emergentagent.com/job_denfert-pizzeria/artifacts/8mhits89_file_00000000dfd471f4be6eb9f4ebd8e6bf.png";
 const RESTAURANT = "https://images.pexels.com/photos/4997894/pexels-photo-4997894.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=900&w=1200";
@@ -14,6 +15,31 @@ const RESTAURANT = "https://images.pexels.com/photos/4997894/pexels-photo-499789
 export default function Home() {
   const { t, lang, setLang } = useI18n();
   const router = useRouter();
+  const [dynSettings, setDynSettings] = useState<{ phone?: string | null; address?: string | null } | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      if (!isSupabaseConfigured()) return;
+      try {
+        const s = await fetchRestaurantSettings();
+        if (!cancelled && s) setDynSettings({ phone: s.phone, address: s.address });
+      } catch {
+        // silent — fall back to hardcoded address below.
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  // Split a free-form address into two display lines (street vs city/postcode).
+  const addressLines = (() => {
+    const raw = (dynSettings?.address || "").trim();
+    if (!raw) return { l1: "61 Rue Denfert", l2: "Rochereau", postcode: "69004 Lyon, France" };
+    // Heuristic: keep first comma chunk as street, rest as city/postcode.
+    const parts = raw.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length >= 2) return { l1: parts[0], l2: "", postcode: parts.slice(1).join(", ") };
+    return { l1: parts[0], l2: "", postcode: "" };
+  })();
 
   const pillars = [
     { icon: "feather", key: "flour" },
@@ -83,8 +109,8 @@ export default function Home() {
             <LinearGradient colors={["rgba(5,5,5,0.3)", "rgba(5,5,5,0.95)"]} style={StyleSheet.absoluteFillObject} />
             <View style={{ padding: theme.space.xl }}>
               <Text style={styles.eyebrowGold}>— {lang === "fr" ? "VISITEZ-NOUS" : "VISIT US"}</Text>
-              <Text style={styles.infoTitle}>61 Rue Denfert{"\n"}Rochereau</Text>
-              <Text style={styles.infoSub}>69004 Lyon, France</Text>
+              <Text style={styles.infoTitle}>{addressLines.l1}{addressLines.l2 ? `\n${addressLines.l2}` : ""}</Text>
+              <Text style={styles.infoSub}>{addressLines.postcode || "69004 Lyon, France"}</Text>
               <View style={{ marginTop: theme.space.lg, gap: 8 }}>
                 <View style={styles.infoRow}><Feather name="sun" size={14} color={theme.color.brand} /><Text style={styles.infoLine}>{t("hoursLunch")}</Text></View>
                 <View style={styles.infoRow}><Feather name="moon" size={14} color={theme.color.brand} /><Text style={styles.infoLine}>{t("hoursDinner")}</Text></View>

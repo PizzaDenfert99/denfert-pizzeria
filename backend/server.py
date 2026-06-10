@@ -22,6 +22,12 @@ client = AsyncIOMotorClient(
 db = client[os.environ["DB_NAME"]]
 JWT_SECRET = os.environ["JWT_SECRET"]
 
+# Supabase server-side (service-role) configuration — used ONLY for the one-time
+# CMS seed import endpoint. These are optional: when absent, the seed-from-mongo
+# endpoint returns a friendly 503 instead of crashing.
+SUPABASE_URL = (os.environ.get("SUPABASE_URL") or "").rstrip("/")
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or ""
+
 app = FastAPI(title="Pizza Denfert API")
 api = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO)
@@ -192,11 +198,17 @@ async def startup():
             await _coro
         except Exception as _idx_err:
             log.warning(f"create_index({_name}) skipped: {_idx_err}")
-    # Always replace menu on startup to reflect updates
+    # Menu seed: ONLY insert if collection is empty. Supabase is now the source
+    # of truth for the customer menu (see /app/supabase/setup.sql + /admin-cms),
+    # but we keep this local copy as a fallback for the legacy /api/menu route
+    # and to resolve pizza_id → name in admin stats. Idempotent on restart.
     try:
-        await db.menu.delete_many({})
-        await db.menu.insert_many([dict(m) for m in SEED])
-        log.info(f"Seeded {len(SEED)} menu items")
+        existing_menu = await db.menu.count_documents({})
+        if existing_menu == 0:
+            await db.menu.insert_many([dict(m) for m in SEED])
+            log.info(f"Seeded {len(SEED)} menu items (fallback set)")
+        else:
+            log.info(f"Menu already has {existing_menu} items — skipping seed (Supabase owns the live menu)")
     except Exception as _seed_err:
         log.warning(f"menu seed skipped: {_seed_err}")
     if not await db.users.find_one({"email": "admin@pizzadenfert.fr"}):
@@ -849,6 +861,118 @@ async def admin_dashboard(period: str = "all", authorization: Optional[str] = He
 
 @api.get("/")
 async def api_root(): return {"service": "Pizza Denfert API", "status": "ok"}
+
+
+# ============================================================================
+# Supabase CMS — one-time bulk seed of the legacy MongoDB menu into Supabase.
+# Protected by FastAPI admin JWT. Uses the server-only SERVICE_ROLE_KEY so it
+# bypasses RLS for this single trusted call. Idempotent on category slug + item
+# name — re-running will NOT create duplicates.
+# ============================================================================
+
+# Maps the legacy SEED.category strings → (name_fr, slug, sort_order).
+_CATEGORY_MAP = {
+    "pizzas":    ("Pizzas",    "pizzas",    1),
+    "focaccias": ("Focaccias", "focaccias", 2),
+    "gratins":   ("Gratins",   "gratins",   3),
+    "salades":   ("Salades",   "salades",   4),
+    "desserts":  ("Desserts",  "desserts",  5),
+    "boissons":  ("Boissons",  "boissons",  6),
+    "vins":      ("Vins",      "vins",      7),
+}
+
+
+def _sb_headers():
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(503, "Supabase not configured on server (SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing). See /app/SUPABASE_SETUP.md")
+    return {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "resolution=merge-duplicates,return=representation",
+    }
+
+
+@api.post("/admin/cms/seed-from-mongo")
+async def cms_seed_from_mongo(authorization: Optional[str] = Header(None)):
+    """One-shot import of SEED → Supabase categories + menu_items.
+    Requires FastAPI admin auth. Safe to call multiple times — uses upsert on
+    category slug and item (category_id, name). Returns counts.
+    """
+    await _require_admin(authorization)
+    headers = _sb_headers()
+    base = f"{SUPABASE_URL}/rest/v1"
+
+    inserted_categories = 0
+    inserted_items = 0
+
+    async with httpx.AsyncClient(timeout=30.0) as cli:
+        # 1. Upsert categories. Conflict target = slug (which is unique).
+        cat_payload = [
+            {"name": name, "slug": slug, "sort_order": order, "is_active": True}
+            for (name, slug, order) in _CATEGORY_MAP.values()
+        ]
+        r = await cli.post(
+            f"{base}/categories?on_conflict=slug",
+            headers=headers, json=cat_payload,
+        )
+        if r.status_code >= 400:
+            raise HTTPException(502, f"Supabase categories upsert failed: {r.status_code} {r.text[:300]}")
+        inserted_categories = len(r.json() or [])
+
+        # Fetch the resulting slug → id map.
+        r = await cli.get(f"{base}/categories?select=id,slug", headers=headers)
+        if r.status_code >= 400:
+            raise HTTPException(502, f"Supabase categories fetch failed: {r.text[:300]}")
+        slug_to_id = {row["slug"]: row["id"] for row in r.json()}
+
+        # 2. Upsert menu_items. We DO NOT have a unique constraint on (name) yet,
+        # so we manually check existing names per category to stay idempotent.
+        r = await cli.get(f"{base}/menu_items?select=name,category_id", headers=headers)
+        existing_pairs = set()
+        if r.status_code < 400:
+            for row in r.json():
+                existing_pairs.add((row.get("category_id"), (row.get("name") or "").strip().lower()))
+
+        items_payload = []
+        for idx, s in enumerate(SEED):
+            cat_id = slug_to_id.get(s["category"])
+            if not cat_id:
+                continue
+            key = (cat_id, s["name"].strip().lower())
+            if key in existing_pairs:
+                continue
+            # Prices: pizzas use `{26, 31}` map, others use single `price`.
+            if "prices" in s:
+                prices = {str(k): float(v) for k, v in s["prices"].items()}
+            else:
+                prices = {"default": float(s.get("price") or 0)}
+            ingredients_text = s.get("ingredients_fr") or ""
+            ingredients = [t.strip() for t in re.split(r",|·", ingredients_text) if t.strip()]
+            items_payload.append({
+                "name": s["name"],
+                "description": s.get("desc_fr") or None,
+                "ingredients": ingredients,
+                "prices": prices,
+                "image_url": s.get("image"),
+                "category_id": cat_id,
+                "sort_order": idx,
+                "is_active": True,
+            })
+
+        if items_payload:
+            r = await cli.post(f"{base}/menu_items", headers=headers, json=items_payload)
+            if r.status_code >= 400:
+                raise HTTPException(502, f"Supabase menu_items insert failed: {r.status_code} {r.text[:400]}")
+            inserted_items = len(r.json() or [])
+
+    return {
+        "ok": True,
+        "inserted_categories": inserted_categories,
+        "inserted_items": inserted_items,
+        "skipped_existing": len(SEED) - inserted_items,
+    }
+
 
 app.include_router(api)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
