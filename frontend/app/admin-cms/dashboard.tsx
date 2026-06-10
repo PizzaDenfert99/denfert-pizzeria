@@ -189,7 +189,7 @@ export default function CmsDashboard() {
 
     // 2. Try to build + upload a thumbnail (skipped if browser cannot decode or image is already small).
     let thumbnailUrl: string | null = null;
-    const thumbBlob = await buildThumbnail(file, 1200, 0.9);
+    const thumbBlob = await buildThumbnail(file, 1600, 0.92);
     if (thumbBlob) {
       const thumbPath = `${base}_thumb.jpg`;
       const { error: thErr } = await sb.storage
@@ -341,7 +341,7 @@ export default function CmsDashboard() {
                   <input type="file" accept="image/*" onChange={async (e: any) => {
                     const f = e.target.files?.[0]; if (!f) return;
                     if (!editing.id) { Alert.alert("Enregistrez d'abord le plat", "Une image nécessite un id"); return; }
-                    if (f.size > 10 * 1024 * 1024) { Alert.alert("Fichier trop gros", "Max 10 MB"); return; }
+                    if (f.size > 20 * 1024 * 1024) { Alert.alert("Fichier trop gros", "Max 20 MB"); return; }
                     setSavingId(editing.id);
                     const urls = await uploadImageForItem(editing, f);
                     setSavingId(null);
@@ -366,7 +366,7 @@ export default function CmsDashboard() {
                   }} style={{ color: "white", marginBottom: 12 }} />
                 )}
                 <Text style={{ color: theme.color.muted, fontSize: 10, marginTop: -4, marginBottom: 10 }}>
-                  Jusqu&apos;à 10 MB. L&apos;image originale est conservée en pleine qualité ; une miniature optimisée (≤1200 px, JPEG 90%) est générée automatiquement.
+                  Jusqu&apos;à 20 MB. L&apos;image originale est conservée en pleine qualité, sans aucune compression ; une miniature haute qualité (≤1600 px, JPEG 92%) est générée automatiquement pour l&apos;affichage côté client.
                 </Text>
                 <Pressable onPress={() => setEditing({ ...editing, is_active: !editing.is_active })} style={s.checkRow}>
                   <Feather name={editing.is_active ? "check-square" : "square"} size={16} color={theme.color.brand} />
