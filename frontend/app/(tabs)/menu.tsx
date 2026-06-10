@@ -56,7 +56,8 @@ export default function MenuScreen() {
             name: it.name,
             desc: it.description,
             ingredients: (it.ingredients || []).join(", ") || null,
-            image: it.image_url || undefined,
+            // Prefer the optimised thumbnail for fast list rendering; fall back to original photo.
+            image: it.thumbnail_url || it.image_url || undefined,
             // Reconstruct: pizzas (slug=pizzas) have 26/31 prices; others use `default` or first numeric.
             prices: it.prices && Object.keys(it.prices).some((k) => k !== "default") ? it.prices : null,
             price: it.prices?.default ?? (typeof it.prices === "object" ? Object.values(it.prices || {})[0] : null) ?? null,

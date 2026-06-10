@@ -65,12 +65,15 @@ create table if not exists public.menu_items (
   ingredients text[] not null default '{}',
   prices jsonb not null default '{}'::jsonb,
   image_url text,
+  thumbnail_url text,
   category_id uuid references public.categories(id) on delete set null,
   sort_order integer not null default 0,
   is_active boolean not null default true,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
+-- Add thumbnail_url for projects that ran an older version of this script.
+alter table public.menu_items add column if not exists thumbnail_url text;
 create index if not exists menu_items_category_idx on public.menu_items (category_id);
 create index if not exists menu_items_active_sort_idx on public.menu_items (is_active, sort_order);
 drop trigger if exists set_updated_at on public.menu_items;

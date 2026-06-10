@@ -48,6 +48,7 @@ export type MenuItem = {
   ingredients: string[];
   prices: Record<string, number>;
   image_url: string | null;
+  thumbnail_url: string | null;
   category_id: string | null;
   sort_order: number;
   is_active: boolean;

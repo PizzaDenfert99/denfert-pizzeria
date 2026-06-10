@@ -132,14 +132,76 @@ export default function CmsDashboard() {
     loadAll();
   };
 
-  const uploadImageForItem = async (it: any, file: File) => {
+  // Generate a high-quality thumbnail in the browser (canvas) without touching the original file.
+  // Returns a JPEG Blob (~90% quality, longest-side ≤ MAX_DIM px) or null if generation is not possible.
+  const buildThumbnail = async (file: File, maxDim = 1200, quality = 0.9): Promise<Blob | null> => {
+    if (typeof window === "undefined" || typeof document === "undefined") return null;
+    try {
+      // createImageBitmap handles HEIC on Safari and is faster than <img> decode where supported.
+      const bmp = await (typeof createImageBitmap === "function"
+        ? createImageBitmap(file)
+        : new Promise<HTMLImageElement>((resolve, reject) => {
+            const img = new window.Image();
+            img.onload = () => resolve(img);
+            img.onerror = reject;
+            img.src = URL.createObjectURL(file);
+          }) as any);
+      const w = (bmp as any).width as number;
+      const h = (bmp as any).height as number;
+      if (!w || !h) return null;
+      // Don't upscale — if the source is already small, skip the thumbnail.
+      if (Math.max(w, h) <= maxDim) return null;
+      const scale = maxDim / Math.max(w, h);
+      const tw = Math.round(w * scale);
+      const th = Math.round(h * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = tw; canvas.height = th;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return null;
+      ctx.imageSmoothingEnabled = true;
+      (ctx as any).imageSmoothingQuality = "high";
+      ctx.drawImage(bmp as any, 0, 0, tw, th);
+      return await new Promise<Blob | null>((res) => canvas.toBlob((b) => res(b), "image/jpeg", quality));
+    } catch (e) {
+      console.warn("thumbnail build failed, skipping:", e);
+      return null;
+    }
+  };
+
+  // Uploads ORIGINAL at full quality + optional optimized thumbnail. Returns both public URLs.
+  // The original is stored under `*_original.<ext>` and the thumb under `*_thumb.jpg`.
+  const uploadImageForItem = async (
+    it: any,
+    file: File,
+  ): Promise<{ original: string; thumbnail: string | null } | null> => {
     const sb = getSupabase();
-    const ext = file.name.split(".").pop() || "jpg";
-    const path = `menu_items/${it.id || "new"}/${Date.now()}.${ext}`;
-    const { error } = await sb.storage.from("menu-images").upload(path, file, { upsert: true, contentType: file.type });
-    if (error) { Alert.alert("Erreur upload", error.message); return null; }
-    const { data } = sb.storage.from("menu-images").getPublicUrl(path);
-    return data.publicUrl;
+    const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
+    const stamp = Date.now();
+    const base = `menu_items/${it.id || "new"}/${stamp}`;
+    const origPath = `${base}_original.${ext}`;
+
+    // 1. Upload original AS-IS (no compression on our side).
+    const { error: origErr } = await sb.storage
+      .from("menu-images")
+      .upload(origPath, file, { upsert: true, contentType: file.type, cacheControl: "31536000" });
+    if (origErr) { Alert.alert("Erreur upload (original)", origErr.message); return null; }
+    const originalUrl = sb.storage.from("menu-images").getPublicUrl(origPath).data.publicUrl;
+
+    // 2. Try to build + upload a thumbnail (skipped if browser cannot decode or image is already small).
+    let thumbnailUrl: string | null = null;
+    const thumbBlob = await buildThumbnail(file, 1200, 0.9);
+    if (thumbBlob) {
+      const thumbPath = `${base}_thumb.jpg`;
+      const { error: thErr } = await sb.storage
+        .from("menu-images")
+        .upload(thumbPath, thumbBlob, { upsert: true, contentType: "image/jpeg", cacheControl: "31536000" });
+      if (!thErr) {
+        thumbnailUrl = sb.storage.from("menu-images").getPublicUrl(thumbPath).data.publicUrl;
+      } else {
+        console.warn("thumbnail upload failed (non-fatal):", thErr.message);
+      }
+    }
+    return { original: originalUrl, thumbnail: thumbnailUrl };
   };
 
   const saveSettings = async () => {
@@ -279,11 +341,33 @@ export default function CmsDashboard() {
                   <input type="file" accept="image/*" onChange={async (e: any) => {
                     const f = e.target.files?.[0]; if (!f) return;
                     if (!editing.id) { Alert.alert("Enregistrez d'abord le plat", "Une image nécessite un id"); return; }
-                    if (f.size > 2 * 1024 * 1024) { Alert.alert("Fichier trop gros", "Max 2 MB"); return; }
-                    const url = await uploadImageForItem(editing, f);
-                    if (url) setEditing({ ...editing, image_url: url });
+                    if (f.size > 10 * 1024 * 1024) { Alert.alert("Fichier trop gros", "Max 10 MB"); return; }
+                    setSavingId(editing.id);
+                    const urls = await uploadImageForItem(editing, f);
+                    setSavingId(null);
+                    if (urls) {
+                      // Persist BOTH URLs immediately so the customer screen + CMS list show the new photo without a manual save.
+                      const sb = getSupabase();
+                      const payload: any = { image_url: urls.original };
+                      if (urls.thumbnail) payload.thumbnail_url = urls.thumbnail;
+                      // First attempt with thumbnail_url; if schema lacks the column (PGRST204), retry without it.
+                      let { error } = await sb.from("menu_items").update(payload).eq("id", editing.id);
+                      if (error && /thumbnail_url/i.test(error.message)) {
+                        const { error: e2 } = await sb.from("menu_items").update({ image_url: urls.original }).eq("id", editing.id);
+                        error = e2;
+                        showToast("Image enregistrée (colonne thumbnail_url manquante — voir /app/SUPABASE_SETUP.md)");
+                      } else if (!error) {
+                        showToast(urls.thumbnail ? "Image + miniature en ligne" : "Image en ligne");
+                      }
+                      if (error) Alert.alert("Erreur enregistrement image", error.message);
+                      setEditing({ ...editing, image_url: urls.original, thumbnail_url: urls.thumbnail });
+                      loadAll();
+                    }
                   }} style={{ color: "white", marginBottom: 12 }} />
                 )}
+                <Text style={{ color: theme.color.muted, fontSize: 10, marginTop: -4, marginBottom: 10 }}>
+                  Jusqu&apos;à 10 MB. L&apos;image originale est conservée en pleine qualité ; une miniature optimisée (≤1200 px, JPEG 90%) est générée automatiquement.
+                </Text>
                 <Pressable onPress={() => setEditing({ ...editing, is_active: !editing.is_active })} style={s.checkRow}>
                   <Feather name={editing.is_active ? "check-square" : "square"} size={16} color={theme.color.brand} />
                   <Text style={s.checkTxt}>Actif (visible côté client)</Text>
