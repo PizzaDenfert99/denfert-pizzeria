@@ -79,6 +79,13 @@ export const api = {
     req(`/admin/reservations/${encodeURIComponent(rid)}`, { method: "PATCH", body: JSON.stringify(patch) }),
   adminCreateReservation: (data: any) =>
     req(`/admin/reservations`, { method: "POST", body: JSON.stringify(data) }),
+  pushPublicKey: () => req("/push/web/public-key"),
+  pushSubscribe: (sub: { endpoint: string; keys: any }) =>
+    req("/push/web/subscribe", { method: "POST", body: JSON.stringify(sub) }),
+  pushUnsubscribe: (sub: { endpoint: string; keys: any }) =>
+    req("/push/web/unsubscribe", { method: "POST", body: JSON.stringify(sub) }),
+  pushStatus: () => req("/push/web/status"),
+  pushTest: () => req("/push/web/test", { method: "POST" }),
 };
 
 export { BASE };

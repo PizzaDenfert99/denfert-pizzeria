@@ -8,6 +8,8 @@ from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 import httpx, bcrypt, jwt
+import json as _json
+from pywebpush import webpush, WebPushException
 
 ROOT = Path(__file__).parent
 load_dotenv(ROOT / ".env")
@@ -353,6 +355,122 @@ VALID_STATUSES = ("pending", "confirmed", "cancelled", "completed")
 ACTIVE_STATUSES = ("pending", "confirmed")  # statuses that "hold" a table
 
 
+# ============================================================================
+# PUSH NOTIFICATIONS — Web Push (VAPID) + Emergent native relay (future builds)
+# ============================================================================
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY") or ""
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY") or ""
+VAPID_CONTACT = os.environ.get("VAPID_CONTACT") or "mailto:contact@pizzadenfert.fr"
+EMERGENT_PUSH_KEY = os.environ.get("EMERGENT_PUSH_KEY") or "placeholder"
+EMERGENT_PUSH_BASE = "https://integrations.emergentagent.com"
+
+
+class WebPushSubscriptionIn(BaseModel):
+    endpoint: str
+    keys: dict  # {"p256dh": "...", "auth": "..."}
+
+
+class RegisterDevicePushIn(BaseModel):
+    user_id: str
+    platform: str        # "android" | "ios"
+    device_token: str
+
+
+async def _save_web_subscription(user_id: str, sub: dict) -> None:
+    """Upsert a web push subscription keyed by (user_id, endpoint) so re-subscribing same browser is idempotent."""
+    await db.push_subscriptions.update_one(
+        {"user_id": user_id, "endpoint": sub["endpoint"]},
+        {"$set": {
+            "user_id": user_id, "endpoint": sub["endpoint"],
+            "keys": sub.get("keys", {}), "kind": "web",
+            "updated_at": now(),
+        }, "$setOnInsert": {"created_at": now()}},
+        upsert=True,
+    )
+
+
+def _send_one_web_push(sub: dict, payload: dict) -> tuple[bool, Optional[int]]:
+    """Send to one subscription. Returns (ok, status_code). Caller logs failures."""
+    if not VAPID_PRIVATE_KEY or not VAPID_PUBLIC_KEY:
+        return False, None
+    try:
+        webpush(
+            subscription_info={"endpoint": sub["endpoint"], "keys": sub.get("keys", {})},
+            data=_json.dumps(payload),
+            vapid_private_key=VAPID_PRIVATE_KEY,
+            vapid_claims={"sub": VAPID_CONTACT},
+            ttl=3600,
+        )
+        return True, 201
+    except WebPushException as e:
+        code = getattr(e.response, "status_code", None) if hasattr(e, "response") and e.response is not None else None
+        return False, code
+    except Exception:
+        return False, None
+
+
+async def _send_emergent_native_push(user_ids: List[str], payload: dict) -> None:
+    """Relay to Emergent push (SuprSend). Silently no-ops if PUSH_KEY is placeholder."""
+    if not user_ids or EMERGENT_PUSH_KEY == "placeholder":
+        return
+    try:
+        async with httpx.AsyncClient(timeout=8.0, headers={"X-Push-Key": EMERGENT_PUSH_KEY}) as cx:
+            await cx.post(f"{EMERGENT_PUSH_BASE}/api/v1/push/trigger",
+                          json={"recipients": user_ids,
+                                "data": {"title": payload.get("title", ""),
+                                         "message": payload.get("body", payload.get("message", "")),
+                                         "action_url": payload.get("url")}})
+    except Exception as e:
+        log.warning(f"Emergent push relay failed: {e}")
+
+
+async def push_to_user_ids(user_ids: List[str], payload: dict) -> int:
+    """Fan-out push to all subscriptions for a list of user IDs (BOTH web + native).
+    Returns the number of web pushes that succeeded (best-effort)."""
+    if not user_ids:
+        return 0
+    ok_count = 0
+    # ---- Web push ----
+    if VAPID_PRIVATE_KEY:
+        cur = db.push_subscriptions.find(
+            {"user_id": {"$in": user_ids}, "kind": "web"},
+            {"_id": 0, "endpoint": 1, "keys": 1, "user_id": 1},
+        )
+        dead: List[str] = []
+        async for sub in cur:
+            ok, code = _send_one_web_push(sub, payload)
+            if ok:
+                ok_count += 1
+            elif code in (404, 410):
+                # Subscription is gone / expired — purge it
+                dead.append(sub["endpoint"])
+            else:
+                log.info(f"web push failed (code={code}) for user={sub.get('user_id')}")
+        if dead:
+            await db.push_subscriptions.delete_many({"endpoint": {"$in": dead}})
+    # ---- Native push (Emergent relay) ----
+    await _send_emergent_native_push(user_ids, payload)
+    return ok_count
+
+
+async def notify_admins(payload: dict) -> int:
+    admin_ids = [u["user_id"] async for u in db.users.find(
+        {"is_admin": True, "disabled": {"$ne": True}}, {"_id": 0, "user_id": 1}
+    )]
+    return await push_to_user_ids(admin_ids, payload)
+
+
+async def notify_user(user_id: Optional[str], payload: dict) -> int:
+    if not user_id:
+        return 0
+    return await push_to_user_ids([user_id], payload)
+
+
+# ============================================================================
+# Reservations
+# ============================================================================
+
+
 async def _get_capacity() -> dict:
     """Return current per-zone seat + table configuration, seeding defaults on first call."""
     doc = await db.app_settings.find_one({"key": "capacity"}, {"_id": 0})
@@ -448,6 +566,39 @@ async def _create_reservation_record(user_id: Optional[str], user_name: Optional
          "created_at": now()}
     await db.reservations.insert_one(dict(r))
     r.pop("_id", None)
+    # ---- Push notifications (best-effort, never blocks the response) ----
+    try:
+        zone_label = "Intérieur" if b.zone == "indoor" else "Terrasse"
+        if status == "confirmed":
+            await notify_admins({
+                "title": "Nouvelle réservation",
+                "body": f"{b.name} · {b.date} {b.time} · {b.guests}p · {zone_label} · Table {table_no}",
+                "url": "/admin-reservations",
+                "tag": f"res-{r['id']}",
+            })
+            if user_id:
+                await notify_user(user_id, {
+                    "title": "Réservation confirmée",
+                    "body": f"Table {table_no} · {b.date} {b.time} · {b.guests} couvert{'s' if b.guests>1 else ''}",
+                    "url": "/account",
+                    "tag": f"res-{r['id']}",
+                })
+        else:
+            await notify_admins({
+                "title": "Nouvelle demande (liste d'attente)",
+                "body": f"{b.name} · {b.date} {b.time} · {b.guests}p · {zone_label} · à confirmer",
+                "url": "/admin-reservations",
+                "tag": f"res-{r['id']}",
+            })
+            if user_id:
+                await notify_user(user_id, {
+                    "title": "En liste d'attente",
+                    "body": f"Toutes les tables sont prises à {b.time}. Vous serez confirmé(e) dès qu'une se libère.",
+                    "url": "/account",
+                    "tag": f"res-{r['id']}",
+                })
+    except Exception as e:
+        log.warning(f"reservation push notification failed (non-blocking): {e}")
     return r
 
 
@@ -470,6 +621,16 @@ async def _promote_waitlist(date: str, time: str, zone: str, limit: int = 5) -> 
         res["status"] = "confirmed"
         res["table_no"] = table_no
         promoted.append(res)
+        # Notify the owner customer that their waitlist booking just got a table
+        try:
+            await notify_user(res.get("user_id"), {
+                "title": "Réservation confirmée !",
+                "body": f"Une table s'est libérée — Table {table_no} · {date} {time}",
+                "url": "/account",
+                "tag": f"res-{res['id']}",
+            })
+        except Exception as e:
+            log.warning(f"promote-waitlist push failed: {e}")
     return promoted
 
 
@@ -714,6 +875,22 @@ async def admin_update_reservation(rid: str, b: UpdateReservationIn,
 
     await db.reservations.update_one({"id": rid}, {"$set": update})
 
+    # Notify owner customer on status changes from admin action
+    if existing.get("status") != new_status and existing.get("user_id"):
+        try:
+            messages_fr = {
+                "confirmed": ("Réservation confirmée", f"Table {new_table or '—'} · {new_date} {new_time}"),
+                "cancelled": ("Réservation annulée", f"Votre réservation du {new_date} {new_time} a été annulée"),
+                "completed": ("Merci de votre visite !", f"À bientôt à Pizza Denfert"),
+                "pending":   ("En liste d'attente", f"Votre réservation est en liste d'attente pour {new_date} {new_time}"),
+            }
+            title, body = messages_fr.get(new_status, ("Mise à jour réservation", ""))
+            await notify_user(existing["user_id"], {
+                "title": title, "body": body, "url": "/account", "tag": f"res-{rid}",
+            })
+        except Exception as e:
+            log.warning(f"status-change push failed: {e}")
+
     # If status transitioned away from active OR table freed up → promote waitlist
     promoted: List[dict] = []
     freed_slot_changed = (existing.get("status") in ACTIVE_STATUSES and
@@ -741,6 +918,74 @@ async def admin_create_reservation(b: ResIn, authorization: Optional[str] = Head
 async def my_res(authorization: Optional[str] = Header(None)):
     u = await cu(authorization)
     return await db.reservations.find({"user_id": u["user_id"]}, {"_id": 0}).sort("created_at", -1).to_list(100)
+
+
+# ============================================================================
+# PUSH NOTIFICATION endpoints
+# ============================================================================
+
+@api.get("/push/web/public-key")
+async def push_public_key():
+    """Public — frontend fetches this VAPID public key to call PushManager.subscribe()."""
+    return {"public_key": VAPID_PUBLIC_KEY}
+
+
+@api.post("/push/web/subscribe")
+async def push_web_subscribe(b: WebPushSubscriptionIn, authorization: Optional[str] = Header(None)):
+    """Authenticated — store a browser's push subscription for the logged-in user."""
+    u = await cu(authorization)
+    await _save_web_subscription(u["user_id"], {"endpoint": b.endpoint, "keys": b.keys})
+    return {"ok": True}
+
+
+@api.post("/push/web/unsubscribe")
+async def push_web_unsubscribe(b: WebPushSubscriptionIn, authorization: Optional[str] = Header(None)):
+    u = await cu(authorization)
+    r = await db.push_subscriptions.delete_one({"user_id": u["user_id"], "endpoint": b.endpoint})
+    return {"deleted": r.deleted_count}
+
+
+@api.get("/push/web/status")
+async def push_web_status(authorization: Optional[str] = Header(None)):
+    """Returns the count of web subscriptions for the current user."""
+    u = await cu(authorization)
+    n = await db.push_subscriptions.count_documents({"user_id": u["user_id"], "kind": "web"})
+    return {"subscribed": n > 0, "count": n}
+
+
+@api.post("/push/web/test")
+async def push_web_test(authorization: Optional[str] = Header(None)):
+    """Send a test push to all of the current user's web subscriptions."""
+    u = await cu(authorization)
+    n = await push_to_user_ids([u["user_id"]], {
+        "title": "Test · Pizza Denfert",
+        "body": "Les notifications fonctionnent !",
+        "url": "/account",
+        "tag": "test",
+    })
+    return {"sent": n}
+
+
+@api.post("/register-push", status_code=201)
+async def register_native_push(b: RegisterDevicePushIn):
+    """Native (iOS/Android) device token registration via Emergent push relay.
+    No-ops gracefully when EMERGENT_PUSH_KEY is placeholder (e.g. self-hosted deployment)."""
+    if EMERGENT_PUSH_KEY == "placeholder":
+        return {"status": "skipped", "reason": "EMERGENT_PUSH_KEY not configured"}
+    try:
+        async with httpx.AsyncClient(timeout=8.0, headers={"X-Push-Key": EMERGENT_PUSH_KEY}) as cx:
+            r = await cx.post(f"{EMERGENT_PUSH_BASE}/api/v1/push/users/register",
+                              json=b.model_dump())
+            if r.status_code >= 500:
+                raise HTTPException(502, "Push provider unavailable")
+            r.raise_for_status()
+        return {"status": "registered"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.warning(f"Native push register failed: {e}")
+        return {"status": "error", "detail": str(e)[:200]}
+
 
 # Loyalty
 REWARD_THRESHOLDS = {"coffee": 3, "dessert": 5, "margherita": 10}

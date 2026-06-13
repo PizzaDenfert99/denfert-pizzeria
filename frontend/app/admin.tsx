@@ -9,6 +9,7 @@ import { useAuth } from "@/src/auth-context";
 import { useI18n } from "@/src/i18n";
 import { api } from "@/src/api";
 import { theme } from "@/src/theme";
+import { PushOptIn } from "@/src/PushOptIn";
 
 const REWARDS = [
   { key: "coffee", fr: "Café offert", en: "Free coffee", count: 3, icon: "coffee" as const },
@@ -353,6 +354,7 @@ export default function AdminPanel() {
 
               {/* Bottom quick-actions — 2×3 grid */}
               <Text style={[styles.sectionLbl, { marginTop: theme.space.xl }]}>{lang === "fr" ? "RACCOURCIS" : "QUICK ACTIONS"}</Text>
+              <PushOptIn lang={lang as "fr" | "en"} />
               <View style={styles.quickGrid}>
                 <Pressable testID="open-reservations-btn" onPress={() => router.push("/admin-reservations" as any)} style={styles.quickBtn}>
                   <Feather name="calendar" size={16} color={theme.color.brand} />

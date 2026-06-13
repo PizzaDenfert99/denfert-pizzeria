@@ -447,10 +447,13 @@ function ReservationCard({ r, lang, onAction, onEdit }: {
             <Text style={[s.actGhostTxt, { color: STATUS_META.cancelled.color }]}>{lang === "fr" ? "Annuler" : "Cancel"}</Text>
           </Pressable>
         )}
-        <Pressable testID={`edit-${r.id}`} onPress={onEdit} style={[s.actBtn, s.actGhost]}>
-          <Feather name="edit-2" size={12} color={theme.color.brand} />
-          <Text style={s.actGhostTxt}>{lang === "fr" ? "Modifier" : "Edit"}</Text>
-        </Pressable>
+        {/* Edit only available for pending (waiting list) reservations — confirmed reservations are locked */}
+        {r.status === "pending" && (
+          <Pressable testID={`edit-${r.id}`} onPress={onEdit} style={[s.actBtn, s.actGhost]}>
+            <Feather name="edit-2" size={12} color={theme.color.brand} />
+            <Text style={s.actGhostTxt}>{lang === "fr" ? "Modifier" : "Edit"}</Text>
+          </Pressable>
+        )}
       </View>
     </View>
   );

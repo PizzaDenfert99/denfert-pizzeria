@@ -84,6 +84,8 @@ bcrypt==4.1.3
 PyJWT==2.13.0
 httpx==0.28.1
 anyio==4.13.0
+pywebpush==2.0.0
+cryptography==48.0.0
 REQ
   $SCP /tmp/req_clean.txt ${USER}@${HOST}:/tmp/requirements.txt
 

@@ -12,6 +12,7 @@ import { useAuth } from "@/src/auth-context";
 import { useI18n } from "@/src/i18n";
 import { api, setToken } from "@/src/api";
 import { theme } from "@/src/theme";
+import { PushOptIn } from "@/src/PushOptIn";
 
 const HERO = "https://images.pexels.com/photos/33593005/pexels-photo-33593005.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=900&w=1200";
 const LOGO = "https://customer-assets.emergentagent.com/job_denfert-pizzeria/artifacts/nwj3edom_file_00000000005c71f489c484606f9b5e35.png";
@@ -349,6 +350,8 @@ export default function Account() {
               </View>
             ))
           )}
+
+          <PushOptIn lang={lang as "fr" | "en"} />
 
           <Pressable testID="logout-btn" onPress={signOut} style={styles.logout}>
             <Feather name="log-out" size={16} color={theme.color.error} />

@@ -26,7 +26,7 @@ function nextDays(n: number) {
   return out;
 }
 
-type ZoneAvail = { capacity: number; booked: number; available: number; full: boolean };
+type ZoneAvail = { capacity: number; booked: number; available: number; full: boolean; tables_total?: number; tables_free?: number };
 type Availability = { zones: { indoor: ZoneAvail; terrace: ZoneAvail } };
 
 export default function Reserve() {
@@ -42,17 +42,19 @@ export default function Reserve() {
   const [phone, setPhone] = useState("");
   const [notes, setNotes] = useState("");
   const [loading, setLoading] = useState(false);
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState<null | { status: "confirmed" | "pending"; table_no: string | null }>(null);
   const [err, setErr] = useState<string | null>(null);
 
-  // Refresh availability whenever date/time changes; auto-flip to the other zone if the current pick is full.
+  // Refresh availability on date/time changes AND on a slow poll so the customer sees live capacity.
   useEffect(() => {
     let alive = true;
-    (async () => {
+    let timer: any = null;
+    const fetchAvail = async () => {
       try {
         const a = await api.reservationAvailability(date, time);
         if (!alive) return;
         setAvailability(a);
+        // Auto-flip zone if the current pick is full but the other isn't (only on first load per slot)
         const z = a?.zones;
         if (z && z[zone]?.full && !z[zone === "indoor" ? "terrace" : "indoor"]?.full) {
           setZone(zone === "indoor" ? "terrace" : "indoor");
@@ -60,47 +62,58 @@ export default function Reserve() {
       } catch {
         if (alive) setAvailability(null);
       }
-    })();
-    return () => { alive = false; };
+    };
+    fetchAvail();
+    // Poll every 25s while the user is on the slot
+    timer = setInterval(fetchAvail, 25000);
+    return () => { alive = false; if (timer) clearInterval(timer); };
   }, [date, time]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const zInfo = availability?.zones?.[zone];
   const zoneFull = !!zInfo?.full;
-  const tooManyGuests = !!(zInfo && guests > zInfo.available);
-
   const submit = async () => {
     if (!name || !phone) { setErr(lang === "fr" ? "Nom et téléphone requis" : "Name and phone required"); return; }
-    if (zoneFull) { setErr(lang === "fr" ? "Cette zone est complète, choisissez l'autre." : "This zone is full, choose the other one."); return; }
-    if (tooManyGuests) { setErr(lang === "fr" ? `Il ne reste que ${zInfo?.available} place(s) dans cette zone.` : `Only ${zInfo?.available} seat(s) left in this zone.`); return; }
     setErr(null);
     setLoading(true);
     try {
       const payload = { date, time, guests, zone, name, phone, notes };
-      if (user) await api.createReservation(payload);
-      else await api.createGuestReservation(payload);
-      setDone(true);
+      const r = user ? await api.createReservation(payload) : await api.createGuestReservation(payload);
+      setDone({ status: r.status, table_no: r.table_no || null });
+      // Refresh availability after creation (the customer sees the new state if they go back)
+      try { const a = await api.reservationAvailability(date, time); setAvailability(a); } catch {}
     } catch (e: any) {
       const msg = e?.message || "";
-      if (msg.includes("409")) setErr(lang === "fr" ? "Désolé, la zone vient d'être complète." : "Sorry, this zone just filled up.");
-      else setErr(msg || "Error");
+      setErr(msg || "Error");
     } finally {
       setLoading(false);
     }
   };
 
   if (done) {
+    const isWait = done.status === "pending";
     return (
       <View style={styles.container}>
         <SafeAreaView style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: theme.space.xl }}>
-          <View style={styles.checkCircle}>
-            <Feather name="check" size={32} color={theme.color.onBrandPrimary} />
+          <View style={[styles.checkCircle, isWait && { backgroundColor: "#F39C12" }]}>
+            <Feather name={isWait ? "clock" : "check"} size={32} color={theme.color.onBrandPrimary} />
           </View>
-          <Text style={[styles.title, { marginTop: theme.space.xl, textAlign: "center" }]}>{t("reservationConfirmed")}</Text>
-          <Text style={[styles.body, { textAlign: "center", marginTop: theme.space.md }]}>{t("seeYou")}</Text>
+          <Text style={[styles.title, { marginTop: theme.space.xl, textAlign: "center" }]}>
+            {isWait
+              ? (lang === "fr" ? "En liste d'attente" : "Waiting list")
+              : t("reservationConfirmed")}
+          </Text>
+          <Text style={[styles.body, { textAlign: "center", marginTop: theme.space.md }]}>
+            {isWait
+              ? (lang === "fr"
+                ? "Toutes les tables sont prises pour ce créneau. Vous serez confirmé(e) automatiquement dès qu'une table se libère."
+                : "All tables are taken for this slot. You'll be automatically confirmed as soon as a table opens up.")
+              : t("seeYou")}
+          </Text>
           <Text style={[styles.body, { textAlign: "center", color: theme.color.brand, marginTop: theme.space.lg }]}>
             {date} · {time} · {guests} {lang === "fr" ? "convives" : "guests"} · {zone === "indoor" ? (lang === "fr" ? "Intérieur" : "Indoor") : (lang === "fr" ? "Terrasse" : "Terrace")}
+            {done.table_no ? ` · ${lang === "fr" ? "Table" : "Table"} ${done.table_no}` : ""}
           </Text>
-          <Pressable testID="back-home-btn" onPress={() => { setDone(false); router.replace("/(tabs)"); }} style={[styles.submit, { marginTop: theme.space.xxl }]}>
+          <Pressable testID="back-home-btn" onPress={() => { setDone(null); router.replace("/(tabs)"); }} style={[styles.submit, { marginTop: theme.space.xxl }]}>
             <Text style={styles.submitTxt}>{t("backHome")}</Text>
           </Pressable>
         </SafeAreaView>
@@ -116,25 +129,31 @@ export default function Reserve() {
       ? (lang === "fr" ? "Restaurant intérieur" : "Indoor restaurant")
       : (lang === "fr" ? "Terrasse" : "Terrace");
     const icon = key === "indoor" ? "home" : "sun";
+    const subtitle = !z
+      ? "—"
+      : isFull
+        ? (lang === "fr" ? "Complet · liste d'attente" : "Full · waiting list")
+        : (lang === "fr"
+            ? `${z.tables_free ?? 0} table${(z.tables_free ?? 0) > 1 ? "s" : ""} disponible${(z.tables_free ?? 0) > 1 ? "s" : ""}`
+            : `${z.tables_free ?? 0} table${(z.tables_free ?? 0) > 1 ? "s" : ""} available`);
     return (
       <Pressable
         key={key}
         testID={`zone-${key}`}
-        disabled={isFull}
         onPress={() => setZone(key)}
-        style={[styles.zoneCard, isSelected && !isFull && styles.zoneCardActive, isFull && styles.zoneCardFull]}
+        style={[styles.zoneCard, isSelected && styles.zoneCardActive, isFull && !isSelected && styles.zoneCardFull]}
       >
         <View style={styles.zoneIcon}>
-          <Feather name={icon as any} size={18} color={isFull ? theme.color.muted : isSelected ? theme.color.onBrandPrimary : theme.color.brand} />
+          <Feather name={icon as any} size={18} color={isSelected ? theme.color.onBrandPrimary : isFull ? "#F39C12" : theme.color.brand} />
         </View>
         <View style={{ flex: 1 }}>
-          <Text style={[styles.zoneName, isFull && styles.zoneNameFull, isSelected && !isFull && styles.zoneNameActive]}>{label}</Text>
-          <Text style={[styles.zoneSub, isFull && styles.zoneSubFull]}>
-            {!z ? "—" : isFull ? (lang === "fr" ? "Complet" : "Full") : (lang === "fr" ? `${z.available} place${z.available > 1 ? "s" : ""} restante${z.available > 1 ? "s" : ""}` : `${z.available} seat${z.available > 1 ? "s" : ""} left`)}
-          </Text>
+          <Text style={[styles.zoneName, isFull && !isSelected && styles.zoneNameFull, isSelected && styles.zoneNameActive]}>{label}</Text>
+          <Text style={[styles.zoneSub, isFull && !isSelected && styles.zoneSubFull, isSelected && isFull && { color: theme.color.onBrandPrimary }]}>{subtitle}</Text>
         </View>
         {isFull ? (
-          <View style={styles.fullTag}><Text style={styles.fullTagTxt}>{lang === "fr" ? "COMPLET" : "FULL"}</Text></View>
+          <View style={[styles.fullTag, isSelected && { backgroundColor: theme.color.onBrandPrimary }]}>
+            <Text style={[styles.fullTagTxt, isSelected && { color: theme.color.brand }]}>{lang === "fr" ? "ATTENTE" : "WAITLIST"}</Text>
+          </View>
         ) : isSelected ? (
           <Feather name="check-circle" size={18} color={theme.color.onBrandPrimary} />
         ) : null}
@@ -206,9 +225,13 @@ export default function Reserve() {
 
             {err && <Text style={styles.err}>{err}</Text>}
 
-            <Pressable testID="reserve-submit-btn" onPress={submit} disabled={loading || zoneFull} style={[styles.submit, (loading || zoneFull) && { opacity: 0.6 }]}>
+            <Pressable testID="reserve-submit-btn" onPress={submit} disabled={loading} style={[styles.submit, loading && { opacity: 0.6 }]}>
               {loading ? <ActivityIndicator color={theme.color.onBrandPrimary} /> : (
-                <Text style={styles.submitTxt}>{zoneFull ? (lang === "fr" ? "Zone complète" : "Zone full") : t("confirmReservation")}</Text>
+                <Text style={styles.submitTxt}>
+                  {zoneFull
+                    ? (lang === "fr" ? "Rejoindre la liste d'attente" : "Join waiting list")
+                    : t("confirmReservation")}
+                </Text>
               )}
             </Pressable>
           </View>
