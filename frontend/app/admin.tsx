@@ -349,7 +349,7 @@ export default function AdminPanel() {
                 </View>
               )}
 
-              <View style={{ flexDirection: "row", gap: 8, marginTop: theme.space.xl }}>
+              <View style={{ flexDirection: "row", gap: 8, marginTop: theme.space.xl, flexWrap: "wrap" }}>
                 <Pressable testID="open-stats-btn" onPress={() => router.push("/admin-stats")} style={styles.secondaryBtn}>
                   <Feather name="bar-chart-2" size={14} color={theme.color.brand} />
                   <Text style={styles.secondaryTxt}>{lang === "fr" ? "Statistiques" : "Statistics"}</Text>
@@ -361,6 +361,10 @@ export default function AdminPanel() {
                 <Pressable testID="open-settings-btn" onPress={() => router.push("/admin-settings")} style={styles.secondaryBtn}>
                   <Feather name="sliders" size={14} color={theme.color.brand} />
                   <Text style={styles.secondaryTxt}>{lang === "fr" ? "Paramètres" : "Settings"}</Text>
+                </Pressable>
+                <Pressable testID="open-cms-btn" onPress={() => router.push("/admin-cms")} style={styles.secondaryBtn}>
+                  <Feather name="grid" size={14} color={theme.color.brand} />
+                  <Text style={styles.secondaryTxt}>{lang === "fr" ? "Gérer le menu" : "Menu CMS"}</Text>
                 </Pressable>
               </View>
             </View>
