@@ -37,7 +37,7 @@ export default function AdminPanel() {
   const [customer, setCustomer] = useState<any>(null);
   const [searchResults, setSearchResults] = useState<any[]>([]);
   const [searchInput, setSearchInput] = useState("");
-  const [customQty, setCustomQty] = useState("");
+  const [pendingQty, setPendingQty] = useState<number>(1);     // staff dials this up/down then confirms
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -99,6 +99,7 @@ export default function AdminPanel() {
     setError(null);
     setBusy(true);
     setScanning(false);
+    setPendingQty(1);
     try {
       const c = await api.adminScan(qr);
       setCustomer(c);
@@ -258,58 +259,10 @@ export default function AdminPanel() {
         </View>
 
         <ScrollView contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
-          {/* SCANNER + SEARCH SECTION */}
+          {/* SCANNER + SEARCH SECTION — scanner FIRST (primary workflow) */}
           {!customer && (
             <View>
-              <Text style={styles.sectionLbl}>{lang === "fr" ? "RECHERCHE CLIENT" : "CUSTOMER SEARCH"}</Text>
-              <View style={{ flexDirection: "row", gap: 8, marginBottom: theme.space.lg }}>
-                <TextInput
-                  testID="search-input"
-                  style={[styles.input, { flex: 1, marginBottom: 0 }]}
-                  placeholder={lang === "fr" ? "Téléphone, nom ou QR" : "Phone, name or QR"}
-                  placeholderTextColor={theme.color.muted}
-                  value={searchInput}
-                  onChangeText={setSearchInput}
-                  autoCapitalize="none"
-                  returnKeyType="search"
-                  onSubmitEditing={onSearchPress}
-                />
-                <Pressable
-                  testID="search-btn"
-                  onPress={onSearchPress}
-                  disabled={busy}
-                  style={styles.manualBtn}
-                >
-                  {busy ? <ActivityIndicator color={theme.color.onBrandPrimary} size="small" /> : <Feather name="search" size={18} color={theme.color.onBrandPrimary} />}
-                </Pressable>
-              </View>
-
-              {searchResults.length > 0 && (
-                <View style={{ marginBottom: theme.space.lg }}>
-                  {searchResults.map((c: any) => (
-                    <Pressable
-                      key={c.user_id}
-                      testID={`search-result-${c.user_id}`}
-                      onPress={() => { setCustomer(c); setSearchResults([]); setSearchInput(""); setScanning(false); }}
-                      style={styles.searchRow}
-                    >
-                      <View style={styles.avatar}><Text style={styles.avatarTxt}>{c.name?.[0]?.toUpperCase() || "?"}</Text></View>
-                      <View style={{ flex: 1 }}>
-                        <Text style={styles.customerName}>{c.name}</Text>
-                        <Text style={styles.customerEmail}>{c.phone || c.email || "—"} · {c.pizza_count} 🍕 · {c.available_rewards?.length || 0} 🎁</Text>
-                      </View>
-                      <Feather name="chevron-right" size={18} color={theme.color.brand} />
-                    </Pressable>
-                  ))}
-                  <Pressable testID="close-results-btn" onPress={() => setSearchResults([])} style={{ paddingVertical: 8 }}>
-                    <Text style={{ color: theme.color.muted, fontSize: 12, textAlign: "center" }}>
-                      {lang === "fr" ? "Fermer les résultats" : "Close results"}
-                    </Text>
-                  </Pressable>
-                </View>
-              )}
-
-              <Text style={styles.sectionLbl}>{lang === "fr" ? "OU SCAN QR" : "OR SCAN QR"}</Text>
+              <Text style={styles.sectionLbl}>{lang === "fr" ? "SCANNER QR CLIENT" : "SCAN CUSTOMER QR"}</Text>
               {scanning && Platform.OS !== "web" && permission?.granted ? (
                 <View style={styles.cameraWrap}>
                   <CameraView
@@ -349,22 +302,73 @@ export default function AdminPanel() {
                 </View>
               )}
 
-              <View style={{ flexDirection: "row", gap: 8, marginTop: theme.space.xl, flexWrap: "wrap" }}>
-                <Pressable testID="open-stats-btn" onPress={() => router.push("/admin-stats")} style={styles.secondaryBtn}>
-                  <Feather name="bar-chart-2" size={14} color={theme.color.brand} />
-                  <Text style={styles.secondaryTxt}>{lang === "fr" ? "Statistiques" : "Statistics"}</Text>
+              {/* Fallback: manual search by phone/name (secondary option) */}
+              <Text style={[styles.sectionLbl, { marginTop: theme.space.xl }]}>{lang === "fr" ? "OU RECHERCHE MANUELLE" : "OR MANUAL SEARCH"}</Text>
+              <View style={{ flexDirection: "row", gap: 8, marginBottom: theme.space.lg }}>
+                <TextInput
+                  testID="search-input"
+                  style={[styles.input, { flex: 1, marginBottom: 0 }]}
+                  placeholder={lang === "fr" ? "Téléphone, nom ou QR" : "Phone, name or QR"}
+                  placeholderTextColor={theme.color.muted}
+                  value={searchInput}
+                  onChangeText={setSearchInput}
+                  autoCapitalize="none"
+                  returnKeyType="search"
+                  onSubmitEditing={onSearchPress}
+                />
+                <Pressable
+                  testID="search-btn"
+                  onPress={onSearchPress}
+                  disabled={busy}
+                  style={styles.manualBtn}
+                >
+                  {busy ? <ActivityIndicator color={theme.color.onBrandPrimary} size="small" /> : <Feather name="search" size={18} color={theme.color.onBrandPrimary} />}
                 </Pressable>
-                <Pressable testID="open-staff-btn" onPress={() => router.push("/admin-staff")} style={styles.secondaryBtn}>
-                  <Feather name="users" size={14} color={theme.color.brand} />
-                  <Text style={styles.secondaryTxt}>{lang === "fr" ? "Personnel" : "Staff"}</Text>
+              </View>
+
+              {searchResults.length > 0 && (
+                <View style={{ marginBottom: theme.space.lg }}>
+                  {searchResults.map((c: any) => (
+                    <Pressable
+                      key={c.user_id}
+                      testID={`search-result-${c.user_id}`}
+                      onPress={() => { setCustomer(c); setSearchResults([]); setSearchInput(""); setScanning(false); setPendingQty(1); }}
+                      style={styles.searchRow}
+                    >
+                      <View style={styles.avatar}><Text style={styles.avatarTxt}>{c.name?.[0]?.toUpperCase() || "?"}</Text></View>
+                      <View style={{ flex: 1 }}>
+                        <Text style={styles.customerName}>{c.name}</Text>
+                        <Text style={styles.customerEmail}>{c.phone || c.email || "—"} · {c.pizza_count} 🍕 · {c.available_rewards?.length || 0} 🎁</Text>
+                      </View>
+                      <Feather name="chevron-right" size={18} color={theme.color.brand} />
+                    </Pressable>
+                  ))}
+                  <Pressable testID="close-results-btn" onPress={() => setSearchResults([])} style={{ paddingVertical: 8 }}>
+                    <Text style={{ color: theme.color.muted, fontSize: 12, textAlign: "center" }}>
+                      {lang === "fr" ? "Fermer les résultats" : "Close results"}
+                    </Text>
+                  </Pressable>
+                </View>
+              )}
+
+              {/* Bottom quick-actions — 2×2 grid, no overlap, no wrap inside buttons */}
+              <Text style={[styles.sectionLbl, { marginTop: theme.space.xl }]}>{lang === "fr" ? "RACCOURCIS" : "QUICK ACTIONS"}</Text>
+              <View style={styles.quickGrid}>
+                <Pressable testID="open-stats-btn" onPress={() => router.push("/admin-stats")} style={styles.quickBtn}>
+                  <Feather name="bar-chart-2" size={16} color={theme.color.brand} />
+                  <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Statistiques" : "Statistics"}</Text>
                 </Pressable>
-                <Pressable testID="open-settings-btn" onPress={() => router.push("/admin-settings")} style={styles.secondaryBtn}>
-                  <Feather name="sliders" size={14} color={theme.color.brand} />
-                  <Text style={styles.secondaryTxt}>{lang === "fr" ? "Paramètres" : "Settings"}</Text>
+                <Pressable testID="open-staff-btn" onPress={() => router.push("/admin-staff")} style={styles.quickBtn}>
+                  <Feather name="users" size={16} color={theme.color.brand} />
+                  <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Personnel" : "Staff"}</Text>
                 </Pressable>
-                <Pressable testID="open-cms-btn" onPress={() => router.push("/admin-cms")} style={styles.secondaryBtn}>
-                  <Feather name="grid" size={14} color={theme.color.brand} />
-                  <Text style={styles.secondaryTxt}>{lang === "fr" ? "Gérer le menu" : "Menu CMS"}</Text>
+                <Pressable testID="open-settings-btn" onPress={() => router.push("/admin-settings")} style={styles.quickBtn}>
+                  <Feather name="sliders" size={16} color={theme.color.brand} />
+                  <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Paramètres" : "Settings"}</Text>
+                </Pressable>
+                <Pressable testID="open-cms-btn" onPress={() => router.push("/admin-cms")} style={styles.quickBtn}>
+                  <Feather name="grid" size={16} color={theme.color.brand} />
+                  <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Menu" : "Menu"}</Text>
                 </Pressable>
               </View>
             </View>
@@ -422,51 +426,60 @@ export default function AdminPanel() {
                   </View>
                 )}
 
-                <View style={styles.qtyRow}>
+                {/* ASK: how many pizzas did the customer buy? */}
+                <Text style={styles.askQ}>{lang === "fr" ? "Combien de pizzas le client a-t-il prises ?" : "How many pizzas did the customer buy?"}</Text>
+
+                <View style={styles.stepperRow}>
+                  <Pressable
+                    testID="stepper-minus"
+                    disabled={pendingQty <= 1 || busy}
+                    onPress={() => setPendingQty((q) => Math.max(1, q - 1))}
+                    style={[styles.stepperBtn, (pendingQty <= 1 || busy) && { opacity: 0.35 }]}
+                  >
+                    <Feather name="minus" size={22} color={theme.color.brand} />
+                  </Pressable>
+                  <View style={styles.stepperValue}>
+                    <Text testID="stepper-value" style={styles.stepperValueTxt}>{pendingQty}</Text>
+                    <Text style={styles.stepperValueLbl}>{lang === "fr" ? (pendingQty > 1 ? "pizzas" : "pizza") : (pendingQty > 1 ? "pizzas" : "pizza")}</Text>
+                  </View>
+                  <Pressable
+                    testID="stepper-plus"
+                    disabled={pendingQty >= 20 || busy}
+                    onPress={() => setPendingQty((q) => Math.min(20, q + 1))}
+                    style={[styles.stepperBtn, (pendingQty >= 20 || busy) && { opacity: 0.35 }]}
+                  >
+                    <Feather name="plus" size={22} color={theme.color.brand} />
+                  </Pressable>
+                </View>
+
+                <Pressable
+                  testID="confirm-pizzas-btn"
+                  disabled={busy}
+                  onPress={() => addPizzas(pendingQty)}
+                  style={[styles.confirmBtn, busy && { opacity: 0.6 }]}
+                >
+                  {busy ? <ActivityIndicator color={theme.color.onBrandPrimary} /> : (
+                    <>
+                      <Feather name="check" size={18} color={theme.color.onBrandPrimary} />
+                      <Text style={styles.confirmTxt}>
+                        {lang === "fr" ? `Confirmer +${pendingQty} pizza${pendingQty > 1 ? "s" : ""}` : `Confirm +${pendingQty} pizza${pendingQty > 1 ? "s" : ""}`}
+                      </Text>
+                    </>
+                  )}
+                </Pressable>
+
+                {/* Correction control — small minus to fix a mistake */}
+                {customer.pizza_count > 0 && (
                   <Pressable
                     testID="remove-pizza-1"
-                    disabled={busy || customer.pizza_count <= 0}
+                    disabled={busy}
                     onPress={() => addPizzas(-1)}
-                    style={[styles.qtyBtnMinus, (busy || customer.pizza_count <= 0) && { opacity: 0.35 }]}
+                    style={styles.undoBtn}
                   >
-                    <Feather name="minus" size={18} color={theme.color.error} />
+                    <Feather name="rotate-ccw" size={12} color={theme.color.error} />
+                    <Text style={styles.undoTxt}>{lang === "fr" ? "Retirer 1 pizza (correction)" : "Remove 1 pizza (undo)"}</Text>
                   </Pressable>
-                  {[1, 2, 3, 4, 5].map((n) => (
-                    <Pressable
-                      key={n}
-                      testID={`add-pizza-${n}`}
-                      disabled={busy}
-                      onPress={() => addPizzas(n)}
-                      style={styles.qtyBtn}
-                    >
-                      <Text style={styles.qtyTxt}>+{n}</Text>
-                    </Pressable>
-                  ))}
-                </View>
-                <View style={{ flexDirection: "row", gap: 8, marginTop: 8, width: "100%" }}>
-                  <TextInput
-                    testID="custom-qty-input"
-                    style={[styles.input, { flex: 1, marginBottom: 0, height: 44, textAlign: "center" }]}
-                    placeholder={lang === "fr" ? "Quantité personnalisée" : "Custom qty"}
-                    placeholderTextColor={theme.color.muted}
-                    keyboardType="number-pad"
-                    value={customQty}
-                    onChangeText={setCustomQty}
-                  />
-                  <Pressable
-                    testID="add-pizza-custom-btn"
-                    disabled={busy || !customQty}
-                    onPress={() => {
-                      const n = parseInt(customQty, 10);
-                      if (!n || n < 1 || n > 20) { setError(lang === "fr" ? "Quantité 1-20" : "Qty 1-20"); return; }
-                      addPizzas(n);
-                      setCustomQty("");
-                    }}
-                    style={[styles.manualBtn, { height: 44 }]}
-                  >
-                    <Feather name="plus" size={16} color={theme.color.onBrandPrimary} />
-                  </Pressable>
-                </View>
+                )}
               </View>
 
               <Text style={[styles.sectionLbl, { marginTop: theme.space.xl }]}>{lang === "fr" ? "RÉCOMPENSES" : "REWARDS"}</Text>
@@ -581,6 +594,21 @@ const styles = StyleSheet.create({
   qtyBtn: { flex: 1, height: 48, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(212,175,55,0.1)" },
   qtyBtnMinus: { width: 48, height: 48, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.error, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(198,40,40,0.08)" },
   qtyTxt: { color: theme.color.brand, fontSize: 16, fontWeight: "700" },
+  // ===== NEW: stepper + confirm flow (primary fast-tap workflow) =====
+  askQ: { color: theme.color.onSurface, fontSize: 15, fontWeight: "500", textAlign: "center", marginTop: theme.space.lg, marginBottom: theme.space.md, paddingHorizontal: 8 },
+  stepperRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 18, marginBottom: theme.space.md, width: "100%" },
+  stepperBtn: { width: 60, height: 60, borderRadius: 30, borderWidth: 1.5, borderColor: theme.color.brand, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(212,175,55,0.08)" },
+  stepperValue: { minWidth: 110, alignItems: "center", justifyContent: "center" },
+  stepperValueTxt: { color: theme.color.brand, fontSize: 54, fontWeight: "300", lineHeight: 60 },
+  stepperValueLbl: { color: theme.color.onSurfaceTertiary, fontSize: 11, letterSpacing: 1.5, textTransform: "uppercase", marginTop: -2 },
+  confirmBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10, width: "100%", height: 56, borderRadius: theme.radius.md, backgroundColor: theme.color.brand, marginTop: 4 },
+  confirmTxt: { color: theme.color.onBrandPrimary, fontSize: 15, fontWeight: "700", letterSpacing: 0.5 },
+  undoBtn: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 6, marginTop: 12, paddingVertical: 8 },
+  undoTxt: { color: theme.color.error, fontSize: 11, fontStyle: "italic" },
+  // ===== NEW: 2×2 quick-actions grid (replaces overflowing flexWrap row) =====
+  quickGrid: { flexDirection: "row", flexWrap: "wrap", justifyContent: "space-between", rowGap: 8, columnGap: 8 },
+  quickBtn: { flexBasis: "48%", flexDirection: "row", gap: 8, alignItems: "center", justifyContent: "center", paddingVertical: 14, paddingHorizontal: 8, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surfaceSecondary, minHeight: 50 },
+  quickTxt: { color: theme.color.brand, fontSize: 13, fontWeight: "600", letterSpacing: 0.5, flexShrink: 1 },
   pickerLbl: { color: theme.color.onSurfaceTertiary, fontSize: 9, letterSpacing: 1.5, fontWeight: "700", marginBottom: 2 },
   pizzaChip: { paddingHorizontal: 12, height: 32, borderRadius: 999, borderWidth: 1, borderColor: theme.color.border, alignItems: "center", justifyContent: "center", backgroundColor: "rgba(255,255,255,0.04)" },
   pizzaChipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
