@@ -80,6 +80,20 @@ class ResIn(BaseModel):
 class CapacityIn(BaseModel):
     indoor: int
     terrace: int
+    tables_indoor: Optional[int] = None
+    tables_terrace: Optional[int] = None
+    seats_per_table: Optional[int] = None
+
+class UpdateReservationIn(BaseModel):
+    status: Optional[str] = None      # pending | confirmed | cancelled | completed
+    table_no: Optional[str] = None    # "I-3" or "I-1,I-2" for combined
+    guests: Optional[int] = None
+    date: Optional[str] = None
+    time: Optional[str] = None
+    zone: Optional[str] = None
+    notes: Optional[str] = None
+    name: Optional[str] = None
+    phone: Optional[str] = None
 class PurchaseIn(BaseModel):
     pizza_count: int = 1  # admin records pizza purchase for loyalty
 class RedeemIn(BaseModel):
@@ -333,44 +347,130 @@ async def menu():
 
 # Reservations
 DEFAULT_CAPACITY = {"indoor": 30, "terrace": 20}
+DEFAULT_TABLES = {"tables_indoor": 8, "tables_terrace": 5, "seats_per_table": 4}
 VALID_ZONES = ("indoor", "terrace")
+VALID_STATUSES = ("pending", "confirmed", "cancelled", "completed")
+ACTIVE_STATUSES = ("pending", "confirmed")  # statuses that "hold" a table
 
 
 async def _get_capacity() -> dict:
-    """Return current per-zone seat capacity, seeding defaults on first call."""
+    """Return current per-zone seat + table configuration, seeding defaults on first call."""
     doc = await db.app_settings.find_one({"key": "capacity"}, {"_id": 0})
-    if doc:
-        return {
-            "indoor": int(doc.get("indoor", DEFAULT_CAPACITY["indoor"])),
-            "terrace": int(doc.get("terrace", DEFAULT_CAPACITY["terrace"])),
-        }
-    await db.app_settings.update_one(
-        {"key": "capacity"},
-        {"$set": {"key": "capacity", **DEFAULT_CAPACITY, "updated_at": now()}},
-        upsert=True,
-    )
-    return dict(DEFAULT_CAPACITY)
+    if not doc:
+        await db.app_settings.update_one(
+            {"key": "capacity"},
+            {"$set": {"key": "capacity", **DEFAULT_CAPACITY, **DEFAULT_TABLES, "updated_at": now()}},
+            upsert=True,
+        )
+        return {**DEFAULT_CAPACITY, **DEFAULT_TABLES}
+    return {
+        "indoor": int(doc.get("indoor", DEFAULT_CAPACITY["indoor"])),
+        "terrace": int(doc.get("terrace", DEFAULT_CAPACITY["terrace"])),
+        "tables_indoor": int(doc.get("tables_indoor", DEFAULT_TABLES["tables_indoor"])),
+        "tables_terrace": int(doc.get("tables_terrace", DEFAULT_TABLES["tables_terrace"])),
+        "seats_per_table": int(doc.get("seats_per_table", DEFAULT_TABLES["seats_per_table"])),
+    }
+
+
+def _zone_table_ids(zone: str, count: int) -> List[str]:
+    """Generate canonical table identifiers for a zone (e.g. I-1, I-2, T-1, T-2)."""
+    prefix = "I" if zone == "indoor" else "T"
+    return [f"{prefix}-{i}" for i in range(1, count + 1)]
+
+
+def _parse_tables(table_no: Optional[str]) -> List[str]:
+    """Split a comma-separated table id string into individual ids."""
+    if not table_no:
+        return []
+    return [t.strip() for t in table_no.split(",") if t.strip()]
+
+
+async def _occupied_tables(date: str, time: str, zone: str, exclude_id: Optional[str] = None) -> set:
+    """Set of table ids already assigned for (date, time, zone) by active reservations."""
+    q = {"date": date, "time": time, "zone": zone,
+         "status": {"$in": list(ACTIVE_STATUSES)},
+         "table_no": {"$ne": None}}
+    if exclude_id:
+        q["id"] = {"$ne": exclude_id}
+    occupied: set = set()
+    async for r in db.reservations.find(q, {"_id": 0, "table_no": 1}):
+        for t in _parse_tables(r.get("table_no")):
+            occupied.add(t)
+    return occupied
+
+
+async def _assign_tables_for(date: str, time: str, zone: str, guests: int,
+                             exclude_id: Optional[str] = None) -> Optional[str]:
+    """Try to assign one or more tables in `zone` at (date, time) for `guests`.
+    Returns the assignment string ("I-3" or "I-1,I-2") or None if not enough free tables.
+    Larger parties get combined adjacent table ids (lowest numbers first)."""
+    cap = await _get_capacity()
+    seats = max(1, cap["seats_per_table"])
+    needed = max(1, (guests + seats - 1) // seats)
+    total_tables = cap["tables_indoor"] if zone == "indoor" else cap["tables_terrace"]
+    all_ids = _zone_table_ids(zone, total_tables)
+    occupied = await _occupied_tables(date, time, zone, exclude_id=exclude_id)
+    free = [t for t in all_ids if t not in occupied]
+    if len(free) < needed:
+        return None
+    return ",".join(free[:needed])
+
+
+async def _ensure_can_book(date: str, time: str, zone: str, guests: int) -> dict:
+    """Validate base inputs + return current capacity. Table allocation is done separately."""
+    if zone not in VALID_ZONES:
+        raise HTTPException(400, "Invalid zone")
+    if guests < 1 or guests > 20:
+        raise HTTPException(400, "Invalid guests")
+    return await _get_capacity()
 
 
 async def _zone_booked(date: str, time: str, zone: str) -> int:
-    """Sum of guests booked for (date, time, zone). Cancelled reservations excluded."""
+    """Total guests booked (active statuses only) for (date, time, zone) — used by public availability."""
     agg = await db.reservations.aggregate([
-        {"$match": {"date": date, "time": time, "zone": zone, "status": {"$ne": "cancelled"}}},
+        {"$match": {"date": date, "time": time, "zone": zone, "status": {"$in": list(ACTIVE_STATUSES)}}},
         {"$group": {"_id": None, "total": {"$sum": "$guests"}}},
     ]).to_list(1)
     return int(agg[0]["total"]) if agg else 0
 
 
-async def _ensure_can_book(date: str, time: str, zone: str, guests: int) -> dict:
-    if zone not in VALID_ZONES:
-        raise HTTPException(400, "Invalid zone")
-    if guests < 1 or guests > 20:
-        raise HTTPException(400, "Invalid guests")
-    cap = await _get_capacity()
-    booked = await _zone_booked(date, time, zone)
-    if booked + guests > cap[zone]:
-        raise HTTPException(409, f"Zone {zone} full for this slot")
-    return cap
+async def _create_reservation_record(user_id: Optional[str], user_name: Optional[str],
+                                      user_email: Optional[str], b: "ResIn") -> dict:
+    """Shared logic: try to auto-assign a table → confirmed; else → pending (waiting list)."""
+    await _ensure_can_book(b.date, b.time, b.zone, b.guests)
+    table_no = await _assign_tables_for(b.date, b.time, b.zone, b.guests)
+    status = "confirmed" if table_no else "pending"
+    r = {"id": str(uuid.uuid4()),
+         "user_id": user_id, "user_name": user_name or b.name, "user_email": user_email,
+         "date": b.date, "time": b.time, "guests": b.guests, "zone": b.zone,
+         "name": b.name, "phone": b.phone, "notes": b.notes or "",
+         "table_no": table_no, "status": status,
+         "created_at": now()}
+    await db.reservations.insert_one(dict(r))
+    r.pop("_id", None)
+    return r
+
+
+async def _promote_waitlist(date: str, time: str, zone: str, limit: int = 5) -> List[dict]:
+    """When a table frees up, try to confirm the oldest compatible pending reservations.
+    Returns the list of promoted reservation dicts."""
+    promoted: List[dict] = []
+    pending = await db.reservations.find(
+        {"date": date, "time": time, "zone": zone, "status": "pending"},
+        {"_id": 0},
+    ).sort("created_at", 1).to_list(limit)
+    for res in pending:
+        table_no = await _assign_tables_for(date, time, zone, int(res.get("guests", 0)))
+        if not table_no:
+            continue  # still no room for this party size
+        await db.reservations.update_one(
+            {"id": res["id"]},
+            {"$set": {"status": "confirmed", "table_no": table_no, "promoted_at": now()}},
+        )
+        res["status"] = "confirmed"
+        res["table_no"] = table_no
+        promoted.append(res)
+    return promoted
 
 
 @api.get("/reservations/availability")
@@ -379,34 +479,28 @@ async def reservations_availability(date: str, time: str):
     cap = await _get_capacity()
     out: dict = {"date": date, "time": time, "zones": {}}
     for z in VALID_ZONES:
+        total_tables = cap["tables_indoor"] if z == "indoor" else cap["tables_terrace"]
+        occupied = await _occupied_tables(date, time, z)
+        free_tables = max(0, total_tables - len(occupied))
         booked = await _zone_booked(date, time, z)
         available = max(0, cap[z] - booked)
-        out["zones"][z] = {"capacity": cap[z], "booked": booked, "available": available, "full": available <= 0}
+        out["zones"][z] = {
+            "capacity": cap[z], "booked": booked, "available": available,
+            "tables_total": total_tables, "tables_free": free_tables,
+            "full": free_tables <= 0,
+        }
     return out
 
 
 @api.post("/reservations")
 async def create_res(b: ResIn, authorization: Optional[str] = Header(None)):
     u = await cu(authorization)
-    await _ensure_can_book(b.date, b.time, b.zone, b.guests)
-    r = {"id": str(uuid.uuid4()), "user_id": u["user_id"], "user_name": u["name"],
-         "user_email": u.get("email"), "date": b.date, "time": b.time, "guests": b.guests,
-         "zone": b.zone, "name": b.name, "phone": b.phone, "notes": b.notes or "",
-         "status": "confirmed", "created_at": now()}
-    await db.reservations.insert_one(dict(r))
-    r.pop("_id", None)
-    return r
+    return await _create_reservation_record(u["user_id"], u.get("name"), u.get("email"), b)
+
 
 @api.post("/reservations/guest")
 async def guest_res(b: ResIn):
-    await _ensure_can_book(b.date, b.time, b.zone, b.guests)
-    r = {"id": str(uuid.uuid4()), "user_id": None, "user_name": b.name, "user_email": None,
-         "date": b.date, "time": b.time, "guests": b.guests, "zone": b.zone,
-         "name": b.name, "phone": b.phone, "notes": b.notes or "",
-         "status": "confirmed", "created_at": now()}
-    await db.reservations.insert_one(dict(r))
-    r.pop("_id", None)
-    return r
+    return await _create_reservation_record(None, b.name, None, b)
 
 
 @api.get("/admin/settings/capacity")
@@ -421,12 +515,227 @@ async def admin_update_capacity(b: CapacityIn, authorization: Optional[str] = He
     _check_can_manage(me_admin)
     if b.indoor < 0 or b.indoor > 500 or b.terrace < 0 or b.terrace > 500:
         raise HTTPException(400, "Capacity must be between 0 and 500")
-    await db.app_settings.update_one(
-        {"key": "capacity"},
-        {"$set": {"key": "capacity", "indoor": int(b.indoor), "terrace": int(b.terrace), "updated_at": now()}},
-        upsert=True,
-    )
-    return {"indoor": int(b.indoor), "terrace": int(b.terrace)}
+    update: dict = {"key": "capacity", "indoor": int(b.indoor),
+                    "terrace": int(b.terrace), "updated_at": now()}
+    if b.tables_indoor is not None:
+        if b.tables_indoor < 1 or b.tables_indoor > 100:
+            raise HTTPException(400, "tables_indoor must be between 1 and 100")
+        update["tables_indoor"] = int(b.tables_indoor)
+    if b.tables_terrace is not None:
+        if b.tables_terrace < 1 or b.tables_terrace > 100:
+            raise HTTPException(400, "tables_terrace must be between 1 and 100")
+        update["tables_terrace"] = int(b.tables_terrace)
+    if b.seats_per_table is not None:
+        if b.seats_per_table < 1 or b.seats_per_table > 20:
+            raise HTTPException(400, "seats_per_table must be between 1 and 20")
+        update["seats_per_table"] = int(b.seats_per_table)
+    await db.app_settings.update_one({"key": "capacity"}, {"$set": update}, upsert=True)
+    return await _get_capacity()
+
+
+# ---- Admin: Reservations management ----
+
+def _serialise_res(r: dict) -> dict:
+    r = dict(r); r.pop("_id", None)
+    ca = r.get("created_at")
+    if isinstance(ca, datetime):
+        r["created_at"] = ca.isoformat()
+    pa = r.get("promoted_at")
+    if isinstance(pa, datetime):
+        r["promoted_at"] = pa.isoformat()
+    return r
+
+
+@api.get("/admin/reservations")
+async def admin_list_reservations(
+    authorization: Optional[str] = Header(None),
+    period: Optional[str] = None,     # today | upcoming | past | range | all
+    from_date: Optional[str] = None,  # YYYY-MM-DD
+    to_date: Optional[str] = None,
+    status: Optional[str] = None,     # comma-separated: pending,confirmed,cancelled,completed
+    q: Optional[str] = None,          # search name or phone
+    zone: Optional[str] = None,
+    limit: int = 500,
+):
+    await _require_admin(authorization)
+    today_str = now().date().isoformat()
+    query: dict = {}
+
+    if period == "today":
+        query["date"] = today_str
+    elif period == "upcoming":
+        query["date"] = {"$gte": today_str}
+    elif period == "past":
+        query["date"] = {"$lt": today_str}
+    elif period == "range" or from_date or to_date:
+        dq: dict = {}
+        if from_date: dq["$gte"] = from_date
+        if to_date: dq["$lte"] = to_date
+        if dq: query["date"] = dq
+
+    if status:
+        statuses = [s.strip() for s in status.split(",") if s.strip() in VALID_STATUSES]
+        if statuses:
+            query["status"] = {"$in": statuses}
+
+    if zone in VALID_ZONES:
+        query["zone"] = zone
+
+    if q:
+        rx = re.escape(q.strip())
+        if rx:
+            query["$or"] = [
+                {"name": {"$regex": rx, "$options": "i"}},
+                {"phone": {"$regex": rx, "$options": "i"}},
+                {"user_name": {"$regex": rx, "$options": "i"}},
+            ]
+
+    cur = db.reservations.find(query, {"_id": 0}).sort([("date", 1), ("time", 1), ("created_at", 1)])
+    items = [_serialise_res(r) for r in await cur.to_list(limit)]
+    return {"items": items, "count": len(items), "filter": {
+        "period": period, "from_date": from_date, "to_date": to_date,
+        "status": status, "q": q, "zone": zone,
+    }}
+
+
+@api.get("/admin/reservations/day")
+async def admin_reservations_day(date: str, authorization: Optional[str] = Header(None)):
+    """Full day overview: timeslot grid showing per-zone table occupancy. Used by the timeline view."""
+    await _require_admin(authorization)
+    cap = await _get_capacity()
+    timeslots = []
+    # Service slots: 12:00-14:30 lunch, 19:00-22:30 dinner (every 30 min)
+    for h in [12, 12.5, 13, 13.5, 14, 19, 19.5, 20, 20.5, 21, 21.5, 22]:
+        hh = int(h); mm = 30 if h % 1 else 0
+        timeslots.append(f"{hh:02d}:{mm:02d}")
+
+    reservations = await db.reservations.find(
+        {"date": date, "status": {"$in": list(ACTIVE_STATUSES)}},
+        {"_id": 0},
+    ).sort("time", 1).to_list(1000)
+
+    grid = []
+    for t in timeslots:
+        slot = {"time": t, "zones": {}}
+        for z in VALID_ZONES:
+            total = cap["tables_indoor"] if z == "indoor" else cap["tables_terrace"]
+            ids = _zone_table_ids(z, total)
+            slot["zones"][z] = {"tables": []}
+            for tid in ids:
+                # find any active res at this slot occupying this table
+                holder = next((r for r in reservations
+                               if r["time"] == t and r["zone"] == z and tid in _parse_tables(r.get("table_no"))),
+                              None)
+                slot["zones"][z]["tables"].append({
+                    "id": tid,
+                    "occupied": bool(holder),
+                    "reservation_id": holder["id"] if holder else None,
+                    "name": holder["name"] if holder else None,
+                    "guests": holder["guests"] if holder else None,
+                    "status": holder["status"] if holder else None,
+                })
+        grid.append(slot)
+
+    pending_today = [_serialise_res(r) for r in reservations if r.get("status") == "pending"]
+    return {"date": date, "capacity": cap, "grid": grid, "pending_at_day": pending_today}
+
+
+@api.patch("/admin/reservations/{rid}")
+async def admin_update_reservation(rid: str, b: UpdateReservationIn,
+                                    authorization: Optional[str] = Header(None)):
+    """Update fields, including status. Handles table re-assignment and waiting list promotion."""
+    await _require_admin(authorization)
+    existing = await db.reservations.find_one({"id": rid}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Reservation not found")
+
+    update: dict = {}
+    new_date = b.date or existing["date"]
+    new_time = b.time or existing["time"]
+    new_zone = b.zone or existing["zone"]
+    new_guests = int(b.guests) if b.guests is not None else int(existing["guests"])
+    new_status = b.status or existing["status"]
+
+    if b.zone is not None and b.zone not in VALID_ZONES:
+        raise HTTPException(400, "Invalid zone")
+    if b.status is not None and b.status not in VALID_STATUSES:
+        raise HTTPException(400, "Invalid status")
+    if b.guests is not None and (new_guests < 1 or new_guests > 20):
+        raise HTTPException(400, "Invalid guests")
+
+    schedule_changed = (new_date != existing["date"] or new_time != existing["time"]
+                        or new_zone != existing["zone"] or new_guests != int(existing.get("guests", 0)))
+
+    was_active = existing.get("status") in ACTIVE_STATUSES
+    will_be_active = new_status in ACTIVE_STATUSES
+
+    # Handle table assignment
+    new_table = existing.get("table_no")
+    needs_reassign = False
+    if b.table_no is not None:
+        # Manual table override — validate it doesn't conflict
+        if b.table_no.strip() == "":
+            new_table = None
+        else:
+            cap = await _get_capacity()
+            total = cap["tables_indoor"] if new_zone == "indoor" else cap["tables_terrace"]
+            valid_ids = set(_zone_table_ids(new_zone, total))
+            requested = _parse_tables(b.table_no)
+            unknown = [t for t in requested if t not in valid_ids]
+            if unknown:
+                raise HTTPException(400, f"Unknown table(s): {', '.join(unknown)}")
+            occupied = await _occupied_tables(new_date, new_time, new_zone, exclude_id=rid)
+            clash = [t for t in requested if t in occupied]
+            if clash and will_be_active:
+                raise HTTPException(409, f"Table(s) already occupied: {', '.join(clash)}")
+            new_table = ",".join(requested)
+    elif will_be_active and (schedule_changed or not was_active):
+        needs_reassign = True
+        new_table = None
+
+    if needs_reassign:
+        new_table = await _assign_tables_for(new_date, new_time, new_zone, new_guests, exclude_id=rid)
+        if not new_table:
+            # No table available → if requesting "confirmed", flip to pending instead of error
+            if new_status == "confirmed":
+                new_status = "pending"
+
+    # If status moving to cancelled/completed, free the table
+    if new_status in ("cancelled", "completed"):
+        new_table = None
+
+    update.update({
+        "date": new_date, "time": new_time, "zone": new_zone, "guests": new_guests,
+        "status": new_status, "table_no": new_table, "updated_at": now(),
+    })
+    if b.notes is not None: update["notes"] = b.notes
+    if b.name is not None: update["name"] = b.name
+    if b.phone is not None: update["phone"] = b.phone
+
+    await db.reservations.update_one({"id": rid}, {"$set": update})
+
+    # If status transitioned away from active OR table freed up → promote waitlist
+    promoted: List[dict] = []
+    freed_slot_changed = (existing.get("status") in ACTIVE_STATUSES and
+                         (new_status not in ACTIVE_STATUSES or schedule_changed))
+    if freed_slot_changed:
+        # Promote waitlist on the OLD slot (table just freed there)
+        promoted += await _promote_waitlist(existing["date"], existing["time"], existing["zone"])
+        # And on the new slot too in case scheduling created room
+        if schedule_changed:
+            promoted += await _promote_waitlist(new_date, new_time, new_zone)
+
+    fresh = await db.reservations.find_one({"id": rid}, {"_id": 0})
+    return {"reservation": _serialise_res(fresh) if fresh else None,
+            "promoted": [_serialise_res(p) for p in promoted]}
+
+
+@api.post("/admin/reservations")
+async def admin_create_reservation(b: ResIn, authorization: Optional[str] = Header(None)):
+    """Manual booking by staff (e.g. phone reservation). Same auto-confirm or waitlist rules."""
+    await _require_admin(authorization)
+    return await _create_reservation_record(None, b.name, None, b)
+
 
 @api.get("/reservations/me")
 async def my_res(authorization: Optional[str] = Header(None)):

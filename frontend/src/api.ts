@@ -65,8 +65,20 @@ export const api = {
   adminDeleteStaff: (user_id: string) =>
     req(`/admin/staff/${encodeURIComponent(user_id)}`, { method: "DELETE" }),
   adminGetCapacity: () => req("/admin/settings/capacity"),
-  adminUpdateCapacity: (indoor: number, terrace: number) =>
-    req("/admin/settings/capacity", { method: "PUT", body: JSON.stringify({ indoor, terrace }) }),
+  adminUpdateCapacity: (indoor: number, terrace: number, extras?: { tables_indoor?: number; tables_terrace?: number; seats_per_table?: number }) =>
+    req("/admin/settings/capacity", { method: "PUT", body: JSON.stringify({ indoor, terrace, ...(extras || {}) }) }),
+  adminListReservations: (params: { period?: string; from_date?: string; to_date?: string; status?: string; q?: string; zone?: string; limit?: number } = {}) => {
+    const qs = new URLSearchParams();
+    Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== "") qs.set(k, String(v)); });
+    const s = qs.toString();
+    return req(`/admin/reservations${s ? `?${s}` : ""}`);
+  },
+  adminReservationsDay: (date: string) =>
+    req(`/admin/reservations/day?date=${encodeURIComponent(date)}`),
+  adminUpdateReservation: (rid: string, patch: any) =>
+    req(`/admin/reservations/${encodeURIComponent(rid)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  adminCreateReservation: (data: any) =>
+    req(`/admin/reservations`, { method: "POST", body: JSON.stringify(data) }),
 };
 
 export { BASE };

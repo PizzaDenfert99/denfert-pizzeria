@@ -351,9 +351,13 @@ export default function AdminPanel() {
                 </View>
               )}
 
-              {/* Bottom quick-actions — 2×2 grid, no overlap, no wrap inside buttons */}
+              {/* Bottom quick-actions — 2×3 grid */}
               <Text style={[styles.sectionLbl, { marginTop: theme.space.xl }]}>{lang === "fr" ? "RACCOURCIS" : "QUICK ACTIONS"}</Text>
               <View style={styles.quickGrid}>
+                <Pressable testID="open-reservations-btn" onPress={() => router.push("/admin-reservations" as any)} style={styles.quickBtn}>
+                  <Feather name="calendar" size={16} color={theme.color.brand} />
+                  <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Réservations" : "Reservations"}</Text>
+                </Pressable>
                 <Pressable testID="open-stats-btn" onPress={() => router.push("/admin-stats")} style={styles.quickBtn}>
                   <Feather name="bar-chart-2" size={16} color={theme.color.brand} />
                   <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Statistiques" : "Statistics"}</Text>
