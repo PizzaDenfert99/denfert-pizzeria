@@ -603,35 +603,9 @@ async def _create_reservation_record(user_id: Optional[str], user_name: Optional
 
 
 async def _promote_waitlist(date: str, time: str, zone: str, limit: int = 5) -> List[dict]:
-    """When a table frees up, try to confirm the oldest compatible pending reservations.
-    Returns the list of promoted reservation dicts."""
-    promoted: List[dict] = []
-    pending = await db.reservations.find(
-        {"date": date, "time": time, "zone": zone, "status": "pending"},
-        {"_id": 0},
-    ).sort("created_at", 1).to_list(limit)
-    for res in pending:
-        table_no = await _assign_tables_for(date, time, zone, int(res.get("guests", 0)))
-        if not table_no:
-            continue  # still no room for this party size
-        await db.reservations.update_one(
-            {"id": res["id"]},
-            {"$set": {"status": "confirmed", "table_no": table_no, "promoted_at": now()}},
-        )
-        res["status"] = "confirmed"
-        res["table_no"] = table_no
-        promoted.append(res)
-        # Notify the owner customer that their waitlist booking just got a table
-        try:
-            await notify_user(res.get("user_id"), {
-                "title": "Réservation confirmée !",
-                "body": f"Une table s'est libérée — Table {table_no} · {date} {time}",
-                "url": "/account",
-                "tag": f"res-{res['id']}",
-            })
-        except Exception as e:
-            log.warning(f"promote-waitlist push failed: {e}")
-    return promoted
+    """DISABLED — by product decision, waitlist entries must be manually confirmed by admins,
+    never auto-promoted. Kept as a no-op so existing callers don't break."""
+    return []
 
 
 @api.get("/reservations/availability")
@@ -850,7 +824,11 @@ async def admin_update_reservation(rid: str, b: UpdateReservationIn,
             if clash and will_be_active:
                 raise HTTPException(409, f"Table(s) already occupied: {', '.join(clash)}")
             new_table = ",".join(requested)
-    elif will_be_active and (schedule_changed or not was_active):
+    elif will_be_active and (schedule_changed or not was_active or not new_table):
+        # Re-assign in these cases:
+        #  - schedule changed → old table no longer applies
+        #  - reservation was inactive (cancelled/completed) and is being re-activated
+        #  - reservation has no table yet (e.g. pending → confirmed: needs a table now)
         needs_reassign = True
         new_table = None
 

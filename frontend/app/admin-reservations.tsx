@@ -429,6 +429,7 @@ function ReservationCard({ r, lang, onAction, onEdit }: {
 
       {/* Actions */}
       <View style={s.actions}>
+        {/* Waiting-list entries: ONLY a Confirm button. No Cancel/Edit — manual-review workflow. */}
         {r.status === "pending" && (
           <Pressable testID={`confirm-${r.id}`} onPress={() => onAction(r.id, { status: "confirmed" }, lang === "fr" ? "Confirmée" : "Confirmed")} style={[s.actBtn, s.actPrimary]}>
             <Feather name="check" size={12} color={theme.color.onBrandPrimary} />
@@ -436,23 +437,16 @@ function ReservationCard({ r, lang, onAction, onEdit }: {
           </Pressable>
         )}
         {r.status === "confirmed" && (
-          <Pressable testID={`complete-${r.id}`} onPress={() => onAction(r.id, { status: "completed" }, lang === "fr" ? "Terminée" : "Completed")} style={[s.actBtn, s.actGhost]}>
-            <Feather name="check-circle" size={12} color={theme.color.brand} />
-            <Text style={s.actGhostTxt}>{lang === "fr" ? "Terminer" : "Complete"}</Text>
-          </Pressable>
-        )}
-        {isActive && (
-          <Pressable testID={`cancel-${r.id}`} onPress={() => onAction(r.id, { status: "cancelled" }, lang === "fr" ? "Annulée" : "Cancelled")} style={[s.actBtn, s.actDanger]}>
-            <Feather name="x" size={12} color={STATUS_META.cancelled.color} />
-            <Text style={[s.actGhostTxt, { color: STATUS_META.cancelled.color }]}>{lang === "fr" ? "Annuler" : "Cancel"}</Text>
-          </Pressable>
-        )}
-        {/* Edit only available for pending (waiting list) reservations — confirmed reservations are locked */}
-        {r.status === "pending" && (
-          <Pressable testID={`edit-${r.id}`} onPress={onEdit} style={[s.actBtn, s.actGhost]}>
-            <Feather name="edit-2" size={12} color={theme.color.brand} />
-            <Text style={s.actGhostTxt}>{lang === "fr" ? "Modifier" : "Edit"}</Text>
-          </Pressable>
+          <>
+            <Pressable testID={`complete-${r.id}`} onPress={() => onAction(r.id, { status: "completed" }, lang === "fr" ? "Terminée" : "Completed")} style={[s.actBtn, s.actGhost]}>
+              <Feather name="check-circle" size={12} color={theme.color.brand} />
+              <Text style={s.actGhostTxt}>{lang === "fr" ? "Terminer" : "Complete"}</Text>
+            </Pressable>
+            <Pressable testID={`cancel-${r.id}`} onPress={() => onAction(r.id, { status: "cancelled" }, lang === "fr" ? "Annulée" : "Cancelled")} style={[s.actBtn, s.actDanger]}>
+              <Feather name="x" size={12} color={STATUS_META.cancelled.color} />
+              <Text style={[s.actGhostTxt, { color: STATUS_META.cancelled.color }]}>{lang === "fr" ? "Annuler" : "Cancel"}</Text>
+            </Pressable>
+          </>
         )}
       </View>
     </View>

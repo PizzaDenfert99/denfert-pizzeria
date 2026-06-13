@@ -129,13 +129,16 @@ export default function Reserve() {
       ? (lang === "fr" ? "Restaurant intérieur" : "Indoor restaurant")
       : (lang === "fr" ? "Terrasse" : "Terrace");
     const icon = key === "indoor" ? "home" : "sun";
+    const available = z?.available ?? 0;
     const subtitle = !z
       ? "—"
       : isFull
-        ? (lang === "fr" ? "Complet · liste d'attente" : "Full · waiting list")
+        ? (lang === "fr"
+            ? "Complet — vous pouvez rejoindre la liste d'attente"
+            : "Fully booked — you can join the waiting list")
         : (lang === "fr"
-            ? `${z.tables_free ?? 0} table${(z.tables_free ?? 0) > 1 ? "s" : ""} disponible${(z.tables_free ?? 0) > 1 ? "s" : ""}`
-            : `${z.tables_free ?? 0} table${(z.tables_free ?? 0) > 1 ? "s" : ""} available`);
+            ? `${available} place${available > 1 ? "s" : ""} disponible${available > 1 ? "s" : ""}`
+            : `${available} seat${available > 1 ? "s" : ""} available`);
     return (
       <Pressable
         key={key}

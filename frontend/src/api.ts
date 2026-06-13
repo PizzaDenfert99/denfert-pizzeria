@@ -1,6 +1,17 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Platform } from "react-native";
 
-const BASE = process.env.EXPO_PUBLIC_BACKEND_URL || "";
+// Choose the correct backend per environment:
+//  - Production browsers on the Hetzner-served domains hit `https://api.pizzadenfert.fr`
+//  - Everywhere else (Emergent dev preview, native dev/release) uses `EXPO_PUBLIC_BACKEND_URL`
+const ENV_BASE = process.env.EXPO_PUBLIC_BACKEND_URL || "";
+let BASE = ENV_BASE;
+if (Platform.OS === "web" && typeof window !== "undefined" && window.location?.hostname) {
+  const host = window.location.hostname;
+  if (host === "pizzadenfert.fr" || host === "www.pizzadenfert.fr" || host === "admin.pizzadenfert.fr") {
+    BASE = "https://api.pizzadenfert.fr";
+  }
+}
 
 let _token: string | null = null;
 export async function loadToken() {
