@@ -5,6 +5,7 @@ import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { getSupabase, isSupabaseConfigured } from "@/src/lib/supabase";
 import { theme } from "@/src/theme";
+import { pickImageFromGallery, takePhotoWithCamera } from "@/src/imagePicker";
 
 type Tab = "categories" | "items" | "settings";
 
@@ -170,35 +171,40 @@ export default function CmsDashboard() {
 
   // Uploads ORIGINAL at full quality + optional optimized thumbnail. Returns both public URLs.
   // The original is stored under `*_original.<ext>` and the thumb under `*_thumb.jpg`.
+  // Accepts either a browser File (web) or our PickedFile shape (native).
   const uploadImageForItem = async (
     it: any,
-    file: File,
+    file: { name: string; type: string; size: number; blob?: Blob } & Partial<Blob>,
   ): Promise<{ original: string; thumbnail: string | null } | null> => {
     const sb = getSupabase();
     const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
     const stamp = Date.now();
     const base = `menu_items/${it.id || "new"}/${stamp}`;
     const origPath = `${base}_original.${ext}`;
+    const uploadable: any = file.blob || file;
 
     // 1. Upload original AS-IS (no compression on our side).
     const { error: origErr } = await sb.storage
       .from("menu-images")
-      .upload(origPath, file, { upsert: true, contentType: file.type, cacheControl: "31536000" });
+      .upload(origPath, uploadable, { upsert: true, contentType: file.type, cacheControl: "31536000" });
     if (origErr) { Alert.alert("Erreur upload (original)", origErr.message); return null; }
     const originalUrl = sb.storage.from("menu-images").getPublicUrl(origPath).data.publicUrl;
 
-    // 2. Try to build + upload a thumbnail (skipped if browser cannot decode or image is already small).
+    // 2. Try to build + upload a thumbnail (web only — uses Canvas API; native skips this step,
+    //    the customer screen still works because it falls back to `image_url` when `thumbnail_url` is null).
     let thumbnailUrl: string | null = null;
-    const thumbBlob = await buildThumbnail(file, 1600, 0.92);
-    if (thumbBlob) {
-      const thumbPath = `${base}_thumb.jpg`;
-      const { error: thErr } = await sb.storage
-        .from("menu-images")
-        .upload(thumbPath, thumbBlob, { upsert: true, contentType: "image/jpeg", cacheControl: "31536000" });
-      if (!thErr) {
-        thumbnailUrl = sb.storage.from("menu-images").getPublicUrl(thumbPath).data.publicUrl;
-      } else {
-        console.warn("thumbnail upload failed (non-fatal):", thErr.message);
+    if (Platform.OS === "web" && (file as any) instanceof File) {
+      const thumbBlob = await buildThumbnail(file as any as File, 1600, 0.92);
+      if (thumbBlob) {
+        const thumbPath = `${base}_thumb.jpg`;
+        const { error: thErr } = await sb.storage
+          .from("menu-images")
+          .upload(thumbPath, thumbBlob, { upsert: true, contentType: "image/jpeg", cacheControl: "31536000" });
+        if (!thErr) {
+          thumbnailUrl = sb.storage.from("menu-images").getPublicUrl(thumbPath).data.publicUrl;
+        } else {
+          console.warn("thumbnail upload failed (non-fatal):", thErr.message);
+        }
       }
     }
     return { original: originalUrl, thumbnail: thumbnailUrl };
@@ -336,35 +342,68 @@ export default function CmsDashboard() {
                 </View>
                 <Text style={[s.label, { marginTop: 12 }]}>Image</Text>
                 {editing.image_url && <Text style={{ color: theme.color.muted, fontSize: 11, marginBottom: 6 }}>Actuelle : {editing.image_url}</Text>}
-                {Platform.OS === "web" && (
-                  // @ts-ignore native web input
-                  <input type="file" accept="image/*" onChange={async (e: any) => {
-                    const f = e.target.files?.[0]; if (!f) return;
+
+                {/* Shared image-upload flow: persist the new URLs immediately so the customer screen + CMS list refresh without a manual save. */}
+                {(() => {
+                  const handlePicked = async (picked: any) => {
+                    if (!picked) return;
                     if (!editing.id) { Alert.alert("Enregistrez d'abord le plat", "Une image nécessite un id"); return; }
-                    if (f.size > 20 * 1024 * 1024) { Alert.alert("Fichier trop gros", "Max 20 MB"); return; }
+                    if (picked.size && picked.size > 20 * 1024 * 1024) { Alert.alert("Fichier trop gros", "Max 20 MB"); return; }
                     setSavingId(editing.id);
-                    const urls = await uploadImageForItem(editing, f);
+                    const urls = await uploadImageForItem(editing, picked);
                     setSavingId(null);
-                    if (urls) {
-                      // Persist BOTH URLs immediately so the customer screen + CMS list show the new photo without a manual save.
-                      const sb = getSupabase();
-                      const payload: any = { image_url: urls.original };
-                      if (urls.thumbnail) payload.thumbnail_url = urls.thumbnail;
-                      // First attempt with thumbnail_url; if schema lacks the column (PGRST204), retry without it.
-                      let { error } = await sb.from("menu_items").update(payload).eq("id", editing.id);
-                      if (error && /thumbnail_url/i.test(error.message)) {
-                        const { error: e2 } = await sb.from("menu_items").update({ image_url: urls.original }).eq("id", editing.id);
-                        error = e2;
-                        showToast("Image enregistrée (colonne thumbnail_url manquante — voir /app/SUPABASE_SETUP.md)");
-                      } else if (!error) {
-                        showToast(urls.thumbnail ? "Image + miniature en ligne" : "Image en ligne");
-                      }
-                      if (error) Alert.alert("Erreur enregistrement image", error.message);
-                      setEditing({ ...editing, image_url: urls.original, thumbnail_url: urls.thumbnail });
-                      loadAll();
+                    if (!urls) return;
+                    const sb = getSupabase();
+                    const payload: any = { image_url: urls.original };
+                    if (urls.thumbnail) payload.thumbnail_url = urls.thumbnail;
+                    let { error } = await sb.from("menu_items").update(payload).eq("id", editing.id);
+                    if (error && /thumbnail_url/i.test(error.message)) {
+                      const { error: e2 } = await sb.from("menu_items").update({ image_url: urls.original }).eq("id", editing.id);
+                      error = e2;
+                      showToast("Image enregistrée (colonne thumbnail_url manquante — voir /app/SUPABASE_SETUP.md)");
+                    } else if (!error) {
+                      showToast(urls.thumbnail ? "Image + miniature en ligne" : "Image en ligne");
                     }
-                  }} style={{ color: "white", marginBottom: 12 }} />
-                )}
+                    if (error) Alert.alert("Erreur enregistrement image", error.message);
+                    setEditing({ ...editing, image_url: urls.original, thumbnail_url: urls.thumbnail });
+                    loadAll();
+                  };
+
+                  return Platform.OS === "web" ? (
+                    // @ts-ignore — raw HTML input on web for the familiar OS file picker
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={async (e: any) => {
+                        const f = e.target.files?.[0];
+                        if (!f) return;
+                        await handlePicked({ name: f.name, type: f.type, size: f.size, blob: f });
+                        e.target.value = "";
+                      }}
+                      style={{ color: "white", marginBottom: 12 }}
+                    />
+                  ) : (
+                    <View style={{ flexDirection: "row", gap: 8, marginBottom: 12 }}>
+                      <Pressable
+                        testID="item-image-gallery"
+                        disabled={savingId === editing.id}
+                        onPress={async () => { const p = await pickImageFromGallery(); await handlePicked(p); }}
+                        style={[s.secondaryBtn, { flex: 1, flexDirection: "row", justifyContent: "center", gap: 6 }]}
+                      >
+                        <Feather name="image" size={14} color={theme.color.brand} />
+                        <Text style={s.secondaryBtnTxt}>{savingId === editing.id ? "Envoi…" : "Choisir une photo"}</Text>
+                      </Pressable>
+                      <Pressable
+                        testID="item-image-camera"
+                        disabled={savingId === editing.id}
+                        onPress={async () => { const p = await takePhotoWithCamera(); await handlePicked(p); }}
+                        style={[s.secondaryBtn, { width: 52, justifyContent: "center", alignItems: "center" }]}
+                      >
+                        <Feather name="camera" size={14} color={theme.color.brand} />
+                      </Pressable>
+                    </View>
+                  );
+                })()}
                 <Text style={{ color: theme.color.muted, fontSize: 10, marginTop: -4, marginBottom: 10 }}>
                   Jusqu&apos;à 20 MB. L&apos;image originale est conservée en pleine qualité, sans aucune compression ; une miniature haute qualité (≤1600 px, JPEG 92%) est générée automatiquement pour l&apos;affichage côté client.
                 </Text>

@@ -11,7 +11,9 @@
     "ios": {
       "supportsTablet": true,
       "infoPlist": {
-        "NSCameraUsageDescription": "Scan customer loyalty QR codes"
+        "NSCameraUsageDescription": "Scan customer loyalty QR codes",
+        "NSPhotoLibraryUsageDescription": "Select photos for menu items",
+        "NSPhotoLibraryAddUsageDescription": "Save edited menu photos"
       }
     },
     "android": {
@@ -20,7 +22,11 @@
         "backgroundColor": "#000"
       },
       "edgeToEdgeEnabled": true,
-      "permissions": ["android.permission.CAMERA"]
+      "permissions": [
+        "android.permission.CAMERA",
+        "android.permission.READ_MEDIA_IMAGES",
+        "android.permission.READ_EXTERNAL_STORAGE"
+      ]
     },
     "web": {
       "bundler": "metro",
@@ -33,6 +39,13 @@
         "expo-camera",
         {
           "cameraPermission": "Scan customer loyalty QR codes"
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Select photos for menu items",
+          "cameraPermission": "Take a photo of a menu dish"
         }
       ],
       [
