@@ -1,0 +1,51 @@
+{
+  "summary": "Frontend smoke test of Phase 3 (Kiosk slideshow + Admin Ad Management + customer tabs). Kiosk and admin-ads CRUD work end-to-end. Critical regression found: the MAIN admin dashboard at /admin renders an EMPTY body on the preview URL because the entire content block (scanner + search + quick-actions + PushOptIn) is gated behind isLoyaltyApp(), so the main-app branch quick-actions (Reservations / Menu / Settings / Loyalty link) and PushOptIn are never rendered. Minor: kiosk.tsx uses invalid Feather icon name 'hand'.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "app/admin.tsx",
+        "issue": "The whole scanner/search/quick-actions/PushOptIn block is wrapped in `{isLoyaltyApp() && !customer && (...)}` (line 265). On the MAIN admin (preview URL / admin.pizzadenfert.fr), isLoyaltyApp() is false, so the dashboard body is empty (only header is visible). The `!isLoyaltyApp()` branch quick-actions (Reservations/Menu/Settings/Loyalty App link) inside the quickGrid are unreachable because they sit inside the loyalty-gated outer conditional. Same for PushOptIn — it never renders on the main admin. Reference: /app/frontend/app/admin.tsx:265-409",
+        "testID": "admin-panel",
+        "priority": "CRITICAL"
+      },
+      {
+        "component": "app/kiosk.tsx",
+        "issue": "Console warning: `\"hand\" is not a valid icon name for family \"feather\"` (Feather name='hand' at line 79). Use a valid Feather icon (e.g. 'chevron-left', 'info', 'alert-circle') or switch family. Reference: /app/frontend/app/kiosk.tsx:79",
+        "testID": "kiosk-screen",
+        "priority": "LOW"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Admin → Ad Management navigation",
+        "issue": "Per task, admin dashboard should have a link/button to /admin-ads. The `open-ads-btn` is only rendered when isLoyaltyApp()===true. On the main admin domain it is never reachable from the UI — admin must type /admin-ads in the URL. Same gating issue as above.",
+        "affected_testIDs": ["open-ads-btn", "open-kiosk-btn"]
+      }
+    ],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "app/kiosk.tsx",
+        "issue": "props.pointerEvents is deprecated. Use style.pointerEvents. Reference: warning logged on /kiosk render."
+      }
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Fix /app/frontend/app/admin.tsx so that on the MAIN admin (isLoyaltyApp()===false) the quick-action grid (Reservations/Menu/Settings/Loyalty-link) AND the PushOptIn banner still render. The most likely intended structure: move the `Quick actions` Text + quickGrid + PushOptIn outside of the `{isLoyaltyApp() && !customer && ...}` outer conditional, OR gate them with a separate condition that allows both branches.",
+    "Replace Feather name='hand' in app/kiosk.tsx line 79 with a valid Feather icon (e.g. 'chevron-left', 'arrow-left', or 'info').",
+    "Replace deprecated `props.pointerEvents` with `style.pointerEvents` (likely from one of the wrapping libs — investigate which RN component triggers the warning on kiosk render)."
+  ],
+  "critical_code_review_comments": [
+    "admin.tsx is 670 lines — exceeds 700-line guideline soon; consider extracting CustomerCard, QuickActions, ScannerSection into separate components.",
+    "The `isLoyaltyApp() && !customer` outer condition mixes two unrelated concerns (app mode + customer-loaded state). The `!customer` part is correct for hiding scanner/search when a customer is shown, but the `isLoyaltyApp()` should NOT hide quick-actions/PushOptIn from the main admin."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (not requested)", "frontend": "~75% — kiosk + admin-ads CRUD pass; main admin dashboard regression" },
+  "seed_data_creation": "Created one transient ad slide titled 'SMOKE_TEST' under loyalty section and deleted it. Final state: 4 slides in Club Fidélité (same as pre-test).",
+  "retest_needed": true,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Auth state persists per browser session, so when navigating /admin → /admin-ads in a single playwright run the admin remains authenticated. Confirm dialog used by SlideEditor.remove() is window.confirm — override with `await page.evaluate('window.confirm = () => true')` BEFORE clicking delete-slide. Modal inputs share the DOM with the kiosk settings input (input[0]='idle delay 30'); the title input in the modal is the one whose value === current slide title. Use that to fill, not the first input on the page.",
+  "rca_of_issue": "Empty main-admin dashboard RCA: in /app/frontend/app/admin.tsx the JSX block starting at line 265 begins with `{isLoyaltyApp() && !customer && (` and closes around line 409. It encloses the SCAN/SEARCH section, PushOptIn, AND the quickGrid that contains BOTH the `!isLoyaltyApp()` (main) and `isLoyaltyApp()` (loyalty) action buttons. Because the outer guard requires isLoyaltyApp()===true, the main-app branch is unreachable and the dashboard body is empty on admin.pizzadenfert.fr / preview. Fix: either split into two top-level blocks (main vs loyalty) or move the quickGrid + PushOptIn outside the outer guard."
+}
