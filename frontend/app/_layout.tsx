@@ -8,6 +8,7 @@ import { GestureHandlerRootView } from "react-native-gesture-handler";
 import { useIconFonts } from "@/src/hooks/use-icon-fonts";
 import { AuthProvider, useAuth } from "@/src/auth-context";
 import { api, setToken } from "@/src/api";
+import { useIdleKiosk } from "@/src/useIdleKiosk";
 
 SplashScreen.preventAutoHideAsync();
 
@@ -31,6 +32,13 @@ function OAuthBridge() {
   return null;
 }
 
+// Runs the global idle-watcher (only active on the loyalty subdomain).
+// Must live INSIDE the router tree to use usePathname/useRouter.
+function IdleKioskWatcher() {
+  useIdleKiosk();
+  return null;
+}
+
 export default function RootLayout() {
   const [loaded, error] = useIconFonts();
 
@@ -44,6 +52,7 @@ export default function RootLayout() {
     <GestureHandlerRootView style={{ flex: 1, backgroundColor: "#050505" }}>
       <AuthProvider>
         <OAuthBridge />
+        <IdleKioskWatcher />
         <StatusBar style="light" />
         <Stack
           screenOptions={{

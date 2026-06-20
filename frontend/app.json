@@ -25,7 +25,10 @@
       "permissions": [
         "android.permission.CAMERA",
         "android.permission.READ_MEDIA_IMAGES",
-        "android.permission.READ_EXTERNAL_STORAGE"
+        "android.permission.READ_EXTERNAL_STORAGE",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.VIBRATE",
+        "android.permission.WAKE_LOCK"
       ]
     },
     "web": {
@@ -46,6 +49,13 @@
         {
           "photosPermission": "Select photos for menu items",
           "cameraPermission": "Take a photo of a menu dish"
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#D4AF37",
+          "defaultChannel": "reservations"
         }
       ],
       [

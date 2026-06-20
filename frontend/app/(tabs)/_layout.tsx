@@ -1,14 +1,21 @@
-import { Tabs } from "expo-router";
+import { Tabs, Redirect } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { Platform, StyleSheet, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { theme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
+import { isLoyaltyApp } from "@/src/appMode";
 
 export default function TabsLayout() {
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
+  // Route-gate: the customer-facing tabs (home / menu / reserve / account)
+  // do not exist on the loyalty subdomain. Send any deep-link straight to
+  // the kiosk slideshow so the tablet shows the promo loop immediately.
+  if (isLoyaltyApp()) {
+    return <Redirect href={"/kiosk" as any} />;
+  }
   // Ensure the tab bar always clears the Android navigation gesture bar / 3-button bar.
   // Strategy: always add a fixed 16dp "lift" ON TOP of the OS-reported bottom inset.
   // On Samsung One UI specifically, when 3-button navigation is enabled some

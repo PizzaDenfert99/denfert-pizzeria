@@ -1,0 +1,97 @@
+{
+  "summary": "Iteration 6 backend smoke-tests complete for Kiosk / Ads-Management endpoints + backwards-compat sanity checks. Wrote /app/backend/tests/test_kiosk_ads_iter6.py (31 tests across 5 classes covering every bullet in the review request). All 31 iter6 tests PASS against the public preview URL (https://denfert-pizzeria.preview.emergentagent.com). Full regression run of /app/backend/tests/ shows 120/124 passing — the 4 failures are pre-existing and out-of-scope: they live in test_reservations_zones_iter5.py and indicate that zone-seat capacity is no longer enforced (30-seat indoor cap, 20-seat terrace cap). Likely caused by the tables-based capacity model (DEFAULT_TABLES = 8 indoor / 5 terrace tables of 4 seats) introduced after iter5. Flagged for main agent — see action_items.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "POST /api/reservations (zone=indoor / terrace, guests-based)",
+        "issue": "Iter5 regression: zone seat-capacity (indoor=30, terrace=20) is no longer rejecting over-cap bookings with 409. Posting a 31st seat into indoor (or 21st into terrace) returns 200 instead of 409, and GET /api/reservations/availability returns full=false even when booked==capacity. Reproducible in isolation via `pytest backend/tests/test_reservations_zones_iter5.py`. Likely root cause: the tables-based cap (DEFAULT_TABLES.tables_indoor=8 of seats_per_table=4 = 32 → table 0 picked, but `_ensure_can_book` may now short-circuit on tables_available before checking seat caps). Out-of-scope for the iter6 kiosk/ads review but flagging because the prompt asks for reservations regression sanity."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_kiosk_ads_iter6.py",
+    "/app/test_reports/pytest/pytest_results_iter6.xml"
+  ],
+  "test_results": {
+    "iter6_new_tests": {
+      "total": 31,
+      "passed": 31,
+      "failed": 0,
+      "per_class": {
+        "TestPublicSlides": "3/3",
+        "TestAdminAuthGate": "18/18 (6 endpoints × 3 bad-auth flavours)",
+        "TestAdminSlidesCRUD": "4/4 (list, full CRUD, 404 on delete-missing, 400 on bad section)",
+        "TestAdminKioskSettings": "3/3 (GET shape, PUT idle_seconds=45 → re-GET → restore 30, out-of-range rejection)",
+        "TestBackwardsCompat": "3/3 (POST /auth/login admin, GET /menu non-empty, GET /reservations/me with admin Bearer)"
+      },
+      "run_time": "2.39s"
+    },
+    "full_regression": {
+      "total": 124,
+      "passed": 120,
+      "failed": 4,
+      "failed_tests": [
+        "test_reservations_zones_iter5.py::TestBZoneMath::test_indoor_fills_terrace_unaffected",
+        "test_reservations_zones_iter5.py::TestCTerraceFillsIndoorOpen::test_terrace_fills_indoor_open",
+        "test_reservations_zones_iter5.py::TestDValidation::test_over_cap_returns_409",
+        "test_reservations_zones_iter5.py::TestEAdminCapacityEndpoints::test_lower_cap_below_existing_bookings_rejects_new"
+      ],
+      "in_scope_failures": 0,
+      "out_of_scope_failures": 4
+    }
+  },
+  "feature_verification": {
+    "GET_/api/ads/slides_public_200_shape": "VERIFIED (slides:[], settings:{idle_seconds,loop,default_duration_ms,show_section_titles})",
+    "public_settings_types_idle_int_loop_bool_default_duration_int_show_section_titles_bool": "VERIFIED",
+    "public_only_active_slides_returned": "VERIFIED",
+    "admin_endpoints_reject_no_token": "VERIFIED (401/403 on GET/POST/PATCH/DELETE /admin/ads/slides + GET/PUT /admin/ads/settings)",
+    "admin_endpoints_reject_garbage_bearer": "VERIFIED",
+    "admin_endpoints_reject_wrong_scheme": "VERIFIED (Basic auth header → 401/403)",
+    "admin_login_returns_token_with_is_admin_true": "VERIFIED",
+    "POST_/admin/ads/slides_returns_201_with_id": "VERIFIED (echoes section, title, duration_ms, active)",
+    "PATCH_/admin/ads/slides/{id}_updates_field": "VERIFIED (title + duration_ms change; section/active preserved)",
+    "DELETE_/admin/ads/slides/{id}_removes_and_404_after": "VERIFIED (admin list AND public list both no longer return id)",
+    "DELETE_/admin/ads/slides/{nonexistent}_returns_404": "VERIFIED",
+    "POST_/admin/ads/slides_with_invalid_section_returns_400": "VERIFIED",
+    "GET_/admin/ads/settings_returns_kiosk_dict": "VERIFIED",
+    "PUT_/admin/ads/settings_idle_seconds=45_then_GET_returns_45": "VERIFIED (also reflected in public /ads/slides settings)",
+    "restore_idle_seconds_to_30_after_test": "VERIFIED",
+    "PUT_/admin/ads/settings_rejects_idle_out_of_5..600": "VERIFIED (400 for 1 and 99999)",
+    "POST_/api/auth/login_admin_still_works": "VERIFIED",
+    "GET_/api/menu_returns_non_empty_array": "VERIFIED (21 items live)",
+    "GET_/api/reservations/me_with_admin_bearer_200": "VERIFIED (returns array, may be empty)"
+  },
+  "action_items": [
+    "Investigate the 4 iter5 zone-capacity regressions: seat-cap (30 indoor / 20 terrace) is no longer enforced — booking a 31st seat returns 200 instead of 409, and availability.full stays false. Likely tables-based capacity (DEFAULT_TABLES) introduced after iter5 is now the only check. See /app/backend/server.py around _ensure_can_book / _zone_booked. Out-of-scope for the iter6 ads work itself but the review request explicitly asked for reservation regression sanity.",
+    "Optional cleanup: DEFAULT_SLIDES seeder hardcodes duration_ms=5000 for every slide (line ~1496) ignoring the slide.duration_ms-per-record concept — fine, but worth noting that admins editing a single slide's duration is honoured (verified)."
+  ],
+  "critical_code_review_comments": [
+    "All /api/admin/ads/* and /api/admin/ads/settings handlers consistently call _require_admin(authorization) before any DB work — correct ordering and uniform across all six endpoints.",
+    "Public /api/ads/slides correctly filters to active==True via the Mongo query and re-sorts by canonical section rank (loyalty → experience → ingredients) on top of the DB sort. Belt-and-braces.",
+    "_serialise_slide() strips _id and ISO-formats datetimes — no MongoDB ObjectID leakage on any of the 7 ads endpoints (verified by JSON-decoding every response without errors).",
+    "_seed_default_slides_if_empty() is idempotent (`count_documents == 0` guard). Confirmed: re-hitting GET /ads/slides after the first call does not duplicate the 14 default rows.",
+    "Validation on duration_ms (500..60000) is enforced on BOTH POST and PATCH paths, and idle_seconds (5..600) + default_duration_ms (500..60000) on PUT /admin/ads/settings — verified with negative tests.",
+    "DEFAULT_SLIDES seeder ignores `s.get('image_url')` because none of the 14 defaults define one — they all get image_url='' which is fine for text-only kiosk cards."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_kiosk_ads_iter6.py (created)",
+    "/app/test_reports/pytest/pytest_results_iter6.xml (created)",
+    "/app/test_reports/iteration_6.json (created)"
+  ],
+  "success_rate": {
+    "backend": "100% on iter6 in-scope (31/31); 96.8% on full regression (120/124, with 4 pre-existing out-of-scope iter5 failures)",
+    "frontend": "N/A — skipped per review request (backend only)"
+  },
+  "seed_data_creation": "Tests create exactly one transient TEST_SMOKE slide that is created → patched → deleted within the same test (always cleaned up via try/finally). Kiosk settings are snapshotted at module setup and restored at teardown via an autouse fixture. The default 14-slide seed (already present in this environment from prior runs) is left untouched. No menu / reservations / user data created.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter6 kiosk/ads tests live at /app/backend/tests/test_kiosk_ads_iter6.py and run cleanly in isolation: `python -m pytest backend/tests/test_kiosk_ads_iter6.py -v`. Auth gating tests use parametrized fixtures with three bad-auth flavours (no header / garbage bearer / Basic scheme) — extend the BAD_HEADERS list if you add more admin endpoints. The module-scoped restore_kiosk_settings fixture snapshots and restores the kiosk settings dict so feel free to add tests that mutate idle_seconds/loop/etc. The 4 pre-existing iter5 zone-capacity failures need separate attention (see action_items) — DO NOT muddy iter6 by trying to fix them in this iteration's report.",
+  "rca_of_issue": "iter6 itself: no defects — every kiosk/ads endpoint behaves as specified.\n\nPre-existing iter5 regression (flagged, NOT fixed here):\n- Symptom: Booking a 31st guest into indoor (or 21st into terrace) returns 200 instead of 409 at /api/reservations. availability.full stays false even when booked==capacity.\n- Reproduction: `python -m pytest backend/tests/test_reservations_zones_iter5.py -v` → 4 failures.\n- Probable cause: a table-based capacity model (DEFAULT_TABLES.tables_indoor=8, tables_terrace=5, seats_per_table=4 → 32 indoor / 20 terrace TABLE capacity) was introduced after iter5 and now drives _ensure_can_book / _zone_booked. The seat-based cap stored at app_settings.capacity (indoor=30 / terrace=20) appears to no longer be the binding constraint. Inspect _ensure_can_book + _zone_booked + the availability handler in /app/backend/server.py.\n- Mitigation: either (a) ensure availability/seat-cap is enforced in parallel with table-cap, or (b) update iter5 tests to reflect the new table-based model. Main agent decision."
+}

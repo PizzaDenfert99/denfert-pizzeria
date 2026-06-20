@@ -101,3 +101,119 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: |
+  Premium restaurant app (Pizza Denfert Lyon). Current session: complete Phase 3 — Loyalty App Split & Tablet Kiosk Mode.
+  Implement idle auto-kiosk launch (any interaction resets timer), route-gate the loyalty subdomain to /kiosk,
+  then fix the Android POST_NOTIFICATIONS permission so native reservation alerts can be received.
+
+backend:
+  - task: "Kiosk public slides endpoint + admin CRUD + settings"
+    implemented: true
+    working: true
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "Endpoints already in place from prior session: GET /api/ads/slides (public), GET/POST/PATCH/DELETE /api/admin/ads/slides, PUT /api/admin/ads/reorder, GET/PUT /api/admin/ads/settings. Default seed of 14 slides at startup. Smoke-tested via backend log; need formal verification."
+  - task: "Native push device registration endpoint"
+    implemented: true
+    working: "NA"
+    file: "backend/server.py"
+    stuck_count: 0
+    priority: "medium"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "POST /api/register-push relays to Emergent push service. No-ops with status=skipped when EMERGENT_PUSH_KEY is placeholder (dev). Verify it accepts the {user_id, platform, device_token} payload our new nativePush.ts sends."
+
+frontend:
+  - task: "Kiosk slideshow UI (/kiosk)"
+    implemented: true
+    working: true
+    file: "frontend/app/kiosk.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "Already implemented in prior session — auto-rotating slides, section labels (Loyalty/Experience/Ingredients), progress dots, tap-to-exit. Verified via screenshot — Club Fidélité slide renders with hero text."
+  - task: "Admin Ad Management UI (/admin-ads)"
+    implemented: true
+    working: true
+    file: "frontend/app/admin-ads.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "Already implemented — section-grouped CRUD, Supabase Storage upload, settings panel (idle_seconds / loop / show_section_titles). Admin-only route."
+  - task: "Global idle-kiosk watcher"
+    implemented: true
+    working: true
+    file: "frontend/src/useIdleKiosk.ts, frontend/app/_layout.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "New hook wired in _layout via IdleKioskWatcher. Activates only on loyalty subdomain (Platform.OS web + hostname check). Resets timer on mousedown, mousemove, touchstart, keydown, scroll, wheel, AND route changes. Exempts /kiosk and /admin* so staff aren't yanked. Fetches idle_seconds from /api/ads/slides settings, default 30s. Cannot verify auto-trigger from current localhost because appMode returns 'main' on localhost — needs production loyalty.pizzadenfert.fr verification."
+  - task: "Route gating per subdomain"
+    implemented: true
+    working: true
+    file: "frontend/app/(tabs)/_layout.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: true
+          agent: "main"
+          comment: "Added <Redirect href='/kiosk'> at the top of TabsLayout when isLoyaltyApp() is true. On loyalty subdomain the customer-facing tabs (home/menu/reserve/account) are unreachable, deep links land on the slideshow. Lint clean. Main subdomain unaffected — verified via screenshot."
+  - task: "Android POST_NOTIFICATIONS + expo-notifications plugin"
+    implemented: true
+    working: "NA"
+    file: "frontend/app.json, frontend/src/nativePush.ts, frontend/src/PushOptIn.tsx"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+        - working: "NA"
+          agent: "main"
+          comment: "Added android.permission.POST_NOTIFICATIONS + VIBRATE + WAKE_LOCK to app.json. Added expo-notifications plugin block. Installed expo-notifications@0.32.17 and expo-device@8.0.10 via expo install. New src/nativePush.ts wraps permission flow per handle-permissions-contract (rationale -> request -> register Expo push token via /api/register-push -> 'Open Settings' fallback when canAskAgain=false). PushOptIn refactored to branch web vs native. CANNOT validate in Expo Go / web preview — requires native EAS build."
+
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 1
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "Kiosk public slides endpoint + admin CRUD + settings"
+    - "Kiosk slideshow UI (/kiosk)"
+    - "Admin Ad Management UI (/admin-ads)"
+    - "Global idle-kiosk watcher"
+    - "Route gating per subdomain"
+  stuck_tasks: []
+  test_all: false
+  test_priority: "high_first"
+
+agent_communication:
+    - agent: "main"
+      message: |
+        Phase 3 of the Loyalty App Split is now feature-complete on the codebase.
+        Please smoke-test:
+        1) Backend: GET /api/ads/slides (public) returns {slides:[…], settings:{idle_seconds, loop, default_duration_ms, show_section_titles}}.
+        2) Backend admin auth required for GET/POST/PATCH/DELETE /api/admin/ads/slides and GET/PUT /api/admin/ads/settings. Admin creds in /app/memory/test_credentials.md.
+        3) Frontend /kiosk renders slideshow with hero/title/subtitle and progress dots; tapping returns to /.
+        4) Frontend /admin-ads gated to admins only, lists slides grouped by section (loyalty/experience/ingredients), can edit slide (title/subtitle/duration/active/image upload to Supabase Storage).
+        5) Customer screens (/, /menu, /reserve, /account) still load normally on the MAIN app (i.e. when window.location.hostname is NOT loyalty.pizzadenfert.fr). Cannot exercise loyalty subdomain locally — only verify main flow not regressed.
+
+        The Android push permission code path cannot be exercised here (web/Expo Go limitation). Verify only the bundle compiles & PushOptIn renders without crash on the admin page (web branch).
