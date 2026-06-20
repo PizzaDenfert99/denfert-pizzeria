@@ -1,0 +1,29 @@
+{
+  "summary": "Re-verified Phase 3 frontend after admin.tsx regression fix and kiosk.tsx icon fix. ALL acceptance criteria pass: /admin dashboard now renders RACCOURCIS section with PushOptIn banner ('Notifications bloquées — autorisez-les dans les réglages du navigateur.') and the 4 quick-action buttons (Réservations, Menu, Paramètres, App Fidélité ↗). All 3 navigation taps land on the correct routes (/admin-reservations, /admin-cms, /admin-settings). /admin-ads still renders the 'Diaporama publicitaire' screen with kiosk settings box and section groups (Club Fidélité 4, Expérience 4). /kiosk auto-rotating slideshow renders correctly with the new 'chevrons-left' Feather icon — no more invalid-icon console warning. Customer home / shows the 4-tab bottom bar (Accueil/Menu/Réserver/Compte). Only one residual warning remains: 'props.pointerEvents is deprecated. Use style.pointerEvents' (pre-existing, already reported in iter7).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "kiosk render (third-party dep)",
+        "issue": "Console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents' — emitted once on /kiosk render. Pre-existing, likely from expo-linear-gradient or react-native-safe-area-context internals. Not a blocker."
+      }
+    ]
+  },
+  "test_report_links": [],
+  "action_items": [
+    "Optional: investigate the residual 'props.pointerEvents is deprecated' warning (likely from a transitive dep on /kiosk). Non-blocking."
+  ],
+  "critical_code_review_comments": [
+    "admin.tsx is 670+ lines — still close to the 700-line guideline. Future-proof by extracting CustomerCard / RewardsList / ScannerSection into separate components."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "n/a (not requested)", "frontend": "100% — all 7 review criteria pass" },
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Phase 3 regression closed. Admin dashboard on main subdomain renders correctly: RACCOURCIS label + PushOptIn banner + 4 quickGrid buttons (open-reservations-btn, open-cms-btn, open-settings-btn, open-loyalty-app-btn). Loyalty admin (isLoyaltyApp()===true) variant has not been re-verified in this iteration but the previously-working set (stats/staff/ads/kiosk) is still wired identically and is reached through the same outer `!customer` gate. Kiosk uses 'chevrons-left' Feather icon now and is warning-free for icons.",
+  "rca_of_issue": "Iter7 regression RCA: outer guard `{isLoyaltyApp() && !customer && (...)}` at admin.tsx:265 hid the main-admin quick-action grid. FIX applied by main agent: outer guard reduced to `{!customer && (...)}` (line 265) and the scanner/search subtree gated by a nested `{isLoyaltyApp() && (...)}` (line 267). The quickGrid + PushOptIn now live OUTSIDE the loyalty gate but INSIDE the !customer gate, so both main and loyalty admins see their respective quick actions. Confirmed by playwright on https://denfert-pizzeria.preview.emergentagent.com/admin."
+}

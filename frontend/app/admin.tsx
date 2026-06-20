@@ -262,10 +262,12 @@ export default function AdminPanel() {
 
         <ScrollView contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 60 }} keyboardShouldPersistTaps="handled">
           {/* SCANNER + SEARCH SECTION — only on the loyalty app domain. The main admin keeps this surface free of loyalty tools. */}
-          {isLoyaltyApp() && !customer && (
+          {!customer && (
             <View>
-              <Text style={styles.sectionLbl}>{lang === "fr" ? "SCANNER QR CLIENT" : "SCAN CUSTOMER QR"}</Text>
-              {scanning && Platform.OS !== "web" && permission?.granted ? (
+              {isLoyaltyApp() && (
+                <>
+                  <Text style={styles.sectionLbl}>{lang === "fr" ? "SCANNER QR CLIENT" : "SCAN CUSTOMER QR"}</Text>
+                  {scanning && Platform.OS !== "web" && permission?.granted ? (
                 <View style={styles.cameraWrap}>
                   <CameraView
                     style={StyleSheet.absoluteFillObject}
@@ -351,6 +353,8 @@ export default function AdminPanel() {
                     </Text>
                   </Pressable>
                 </View>
+              )}
+                </>
               )}
 
               {/* Bottom quick-actions — different sets depending on which app this is */}

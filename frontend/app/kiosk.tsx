@@ -76,7 +76,7 @@ export default function Kiosk() {
 
       {/* Tap-to-exit hint, top-right */}
       <View style={s.exitHint}>
-        <Feather name="hand" size={14} color={"#fff8"} />
+        <Feather name="chevrons-left" size={14} color={"#fff8"} />
         <Text style={s.exitHintTxt}>Touchez pour revenir</Text>
       </View>
     </Pressable>
