@@ -97,6 +97,20 @@ export const api = {
     req("/push/web/unsubscribe", { method: "POST", body: JSON.stringify(sub) }),
   pushStatus: () => req("/push/web/status"),
   pushTest: () => req("/push/web/test", { method: "POST" }),
+  // Kiosk / Advertising Management
+  publicAdSlides: () => req("/ads/slides"),
+  adminListAdSlides: () => req("/admin/ads/slides"),
+  adminCreateAdSlide: (data: { section: "loyalty"|"experience"|"ingredients"; title: string; subtitle?: string; image_url?: string; duration_ms?: number; active?: boolean; order?: number }) =>
+    req("/admin/ads/slides", { method: "POST", body: JSON.stringify(data) }),
+  adminUpdateAdSlide: (id: string, patch: any) =>
+    req(`/admin/ads/slides/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  adminDeleteAdSlide: (id: string) =>
+    req(`/admin/ads/slides/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  adminReorderAdSlides: (ids: string[]) =>
+    req(`/admin/ads/reorder`, { method: "PUT", body: JSON.stringify({ ids }) }),
+  adminGetKioskSettings: () => req("/admin/ads/settings"),
+  adminUpdateKioskSettings: (patch: { idle_seconds?: number; loop?: boolean; default_duration_ms?: number; show_section_titles?: boolean }) =>
+    req("/admin/ads/settings", { method: "PUT", body: JSON.stringify(patch) }),
 };
 
 export { BASE };
