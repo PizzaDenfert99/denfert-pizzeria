@@ -13,6 +13,34 @@ import { useI18n } from "@/src/i18n";
 import { api, setToken } from "@/src/api";
 import { theme } from "@/src/theme";
 import { PushOptIn } from "@/src/PushOptIn";
+import { isLoyaltyApp } from "@/src/appMode";
+
+// Discreet lock icon only shown on the loyalty-tablet APK when the user is
+// already signed in. The unauthenticated /account view already exposes a
+// pre-existing "Accès admin / Staff" button visible to all visitors. This
+// loyalty-only icon covers the logged-in case so staff can dive straight
+// into the QR scanner / loyalty admin without signing out.
+function LoyaltyStaffIcon() {
+  const router = useRouter();
+  if (!isLoyaltyApp()) return null;
+  return (
+    <Pressable
+      testID="loyalty-staff-icon"
+      onPress={() => router.push("/admin" as any)}
+      hitSlop={12}
+      style={({ pressed }) => [
+        {
+          width: 36, height: 36, borderRadius: 18,
+          borderWidth: 1, borderColor: "rgba(212,175,55,0.35)",
+          alignItems: "center", justifyContent: "center",
+          backgroundColor: pressed ? "rgba(212,175,55,0.18)" : "rgba(0,0,0,0.4)",
+        },
+      ]}
+    >
+      <Feather name="lock" size={14} color={theme.color.brand} />
+    </Pressable>
+  );
+}
 
 const HERO = "https://images.pexels.com/photos/33593005/pexels-photo-33593005.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=900&w=1200";
 const LOGO = "https://customer-assets.emergentagent.com/job_denfert-pizzeria/artifacts/nwj3edom_file_00000000005c71f489c484606f9b5e35.png";
@@ -243,9 +271,12 @@ export default function Account() {
               <Text style={styles.title}>{user.name}</Text>
               <Text style={styles.subtxt}>{user.email}</Text>
             </View>
-            <Pressable testID="lang-toggle" onPress={() => setLang(lang === "fr" ? "en" : "fr")} style={styles.langBtnRound}>
-              <Text style={styles.langTxt}>{lang.toUpperCase()}</Text>
-            </Pressable>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <Pressable testID="lang-toggle" onPress={() => setLang(lang === "fr" ? "en" : "fr")} style={styles.langBtnRound}>
+                <Text style={styles.langTxt}>{lang.toUpperCase()}</Text>
+              </Pressable>
+              <LoyaltyStaffIcon />
+            </View>
           </View>
 
           {/* LOYALTY CARD */}

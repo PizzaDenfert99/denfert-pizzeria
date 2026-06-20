@@ -84,3 +84,8 @@ The 30-second idle delay is admin-configurable from the Slideshow admin:
 
 ## Open question
 We do not currently expose a visible "Admin login" entry point from the Fidélité tab on the loyalty APK — staff must type the path `/admin` manually. If you'd like a discreet button (e.g., a small gear icon in the top-right of the account tab that only renders on the loyalty variant), say the word and I'll add it before you cut the APK.
+
+## Staff access (resolved)
+- **Logged-out state (auth screen):** the pre-existing "Accès admin / Staff" button (shield icon) is visible to everyone. Staff tap → land on `/admin` login.
+- **Logged-in state (loyalty card view):** a discreet **lock icon** (top-right next to the language toggle) is rendered **only on the loyalty APK** (`LoyaltyStaffIcon`, testID `loyalty-staff-icon`). It does not appear on the main customer app.
+- Staff who land on `/admin` get the loyalty admin (QR scanner + ad management + stats) because `admin.tsx` already branches on `isLoyaltyApp()`.
