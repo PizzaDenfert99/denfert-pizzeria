@@ -126,6 +126,41 @@ class AdminPizzaInExt(BaseModel):
     pizza_count: int = 1
     pizza_id: Optional[str] = None  # optional reference to menu.id for popularity tracking
 
+
+# ---- Kiosk / Advertising Management ----
+AD_SECTIONS = ("loyalty", "experience", "ingredients")
+
+
+class AdSlideIn(BaseModel):
+    section: str  # "loyalty" | "experience" | "ingredients"
+    order: Optional[int] = None
+    title: str
+    subtitle: Optional[str] = ""
+    image_url: Optional[str] = ""
+    duration_ms: int = 5000
+    active: bool = True
+
+
+class AdSlideUpdateIn(BaseModel):
+    section: Optional[str] = None
+    order: Optional[int] = None
+    title: Optional[str] = None
+    subtitle: Optional[str] = None
+    image_url: Optional[str] = None
+    duration_ms: Optional[int] = None
+    active: Optional[bool] = None
+
+
+class AdReorderIn(BaseModel):
+    ids: List[str]   # ordered list of slide IDs (whole-collection order, irrespective of section)
+
+
+class KioskSettingsIn(BaseModel):
+    idle_seconds: Optional[int] = None
+    loop: Optional[bool] = None
+    default_duration_ms: Optional[int] = None
+    show_section_titles: Optional[bool] = None
+
 async def cu(authorization: Optional[str] = Header(None)) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(401, "Missing token")
@@ -1389,6 +1424,223 @@ async def admin_dashboard(period: str = "all", authorization: Optional[str] = He
         ],
         "top_pizzas": top_pizzas,
     }
+
+
+# ============================================================================
+# KIOSK / Advertising Management — public-read for the kiosk display, admin-write.
+# Slides are grouped by section and ordered within each section.
+# ============================================================================
+DEFAULT_KIOSK_SETTINGS = {
+    "idle_seconds": 30,
+    "loop": True,
+    "default_duration_ms": 5000,
+    "show_section_titles": True,
+}
+
+# Default content — seeded on first call, then admin-editable.
+DEFAULT_SLIDES = [
+    # Section 1 — Loyalty Club (4 slides)
+    {"section": "loyalty", "order": 1, "title": "Rejoignez le Club Pizza Denfert",
+     "subtitle": "Plus vous mangez, plus vous gagnez 🍕"},
+    {"section": "loyalty", "order": 2, "title": "3 pizzas = 1 café offert",
+     "subtitle": "Votre fidélité commence dès la première bouchée ☕"},
+    {"section": "loyalty", "order": 3, "title": "5 pizzas = 1 dessert offert",
+     "subtitle": "De quoi terminer le repas en beauté 🍰"},
+    {"section": "loyalty", "order": 4, "title": "10 pizzas = 1 Margherita offerte",
+     "subtitle": "Le grand classique, gratuit, rien que pour vous 🍕"},
+    # Section 2 — Restaurant Experience (4 slides)
+    {"section": "experience", "order": 1, "title": "Votre pizzeria de quartier",
+     "subtitle": "Au pied du Mur des Canuts"},
+    {"section": "experience", "order": 2, "title": "Notre terrasse vous attend",
+     "subtitle": "À deux pas de la Croix-Rousse"},
+    {"section": "experience", "order": 3, "title": "Une belle carte des vins",
+     "subtitle": "Sélection de producteurs régionaux"},
+    {"section": "experience", "order": 4, "title": "Une atmosphère chaleureuse",
+     "subtitle": "Comme à la maison"},
+    # Section 3 — Ingredients & Craftsmanship (6 slides)
+    {"section": "ingredients", "order": 1, "title": "Tomates italiennes San Marzano",
+     "subtitle": "La base d'une vraie pizza"},
+    {"section": "ingredients", "order": 2, "title": "Produits locaux du Rhône-Alpes",
+     "subtitle": "Notre terroir au cœur de chaque assiette"},
+    {"section": "ingredients", "order": 3, "title": "Farine T65 française tradition",
+     "subtitle": "Une pâte légère et digeste"},
+    {"section": "ingredients", "order": 4, "title": "Fromages AOP",
+     "subtitle": "Mozzarella di Bufala · Gorgonzola · Parmigiano Reggiano"},
+    {"section": "ingredients", "order": 5, "title": "Pizza moderne franco-italienne",
+     "subtitle": "Un savoir-faire qui réunit deux cultures"},
+    {"section": "ingredients", "order": 6, "title": "Cuit au feu de bois",
+     "subtitle": "Pour ce goût inimitable qui change tout"},
+]
+
+
+def _serialise_slide(s: dict) -> dict:
+    s = dict(s); s.pop("_id", None)
+    for k in ("created_at", "updated_at"):
+        v = s.get(k)
+        if isinstance(v, datetime):
+            s[k] = v.isoformat()
+    return s
+
+
+async def _seed_default_slides_if_empty():
+    """One-shot: if no ad_slides exist, insert the default catalog. Admin-editable afterwards."""
+    n = await db.ad_slides.count_documents({})
+    if n > 0:
+        return
+    docs = []
+    for s in DEFAULT_SLIDES:
+        docs.append({
+            "id": str(uuid.uuid4()),
+            "section": s["section"], "order": s["order"],
+            "title": s["title"], "subtitle": s.get("subtitle", ""),
+            "image_url": "", "duration_ms": 5000, "active": True,
+            "created_at": now(), "updated_at": now(),
+        })
+    if docs:
+        await db.ad_slides.insert_many(docs)
+        log.info(f"Seeded {len(docs)} default kiosk slides")
+
+
+async def _get_kiosk_settings() -> dict:
+    doc = await db.app_settings.find_one({"key": "kiosk"}, {"_id": 0})
+    if not doc:
+        await db.app_settings.update_one(
+            {"key": "kiosk"},
+            {"$set": {"key": "kiosk", **DEFAULT_KIOSK_SETTINGS, "updated_at": now()}},
+            upsert=True,
+        )
+        return dict(DEFAULT_KIOSK_SETTINGS)
+    return {
+        "idle_seconds": int(doc.get("idle_seconds", DEFAULT_KIOSK_SETTINGS["idle_seconds"])),
+        "loop": bool(doc.get("loop", DEFAULT_KIOSK_SETTINGS["loop"])),
+        "default_duration_ms": int(doc.get("default_duration_ms", DEFAULT_KIOSK_SETTINGS["default_duration_ms"])),
+        "show_section_titles": bool(doc.get("show_section_titles", DEFAULT_KIOSK_SETTINGS["show_section_titles"])),
+    }
+
+
+@api.get("/ads/slides")
+async def public_slides():
+    """Public — kiosk displays consume this. Returns only ACTIVE slides ordered by section + order."""
+    await _seed_default_slides_if_empty()
+    cur = db.ad_slides.find({"active": True}, {"_id": 0}).sort([("section", 1), ("order", 1)])
+    items = await cur.to_list(500)
+    # Stable section ordering: loyalty → experience → ingredients
+    section_rank = {s: i for i, s in enumerate(AD_SECTIONS)}
+    items.sort(key=lambda x: (section_rank.get(x.get("section"), 99), int(x.get("order", 0))))
+    return {"slides": [_serialise_slide(s) for s in items],
+            "settings": await _get_kiosk_settings()}
+
+
+@api.get("/admin/ads/slides")
+async def admin_list_slides(authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    await _seed_default_slides_if_empty()
+    cur = db.ad_slides.find({}, {"_id": 0}).sort([("section", 1), ("order", 1)])
+    items = await cur.to_list(500)
+    section_rank = {s: i for i, s in enumerate(AD_SECTIONS)}
+    items.sort(key=lambda x: (section_rank.get(x.get("section"), 99), int(x.get("order", 0))))
+    return {"slides": [_serialise_slide(s) for s in items]}
+
+
+@api.post("/admin/ads/slides", status_code=201)
+async def admin_create_slide(b: AdSlideIn, authorization: Optional[str] = Header(None)):
+    me = await _require_admin(authorization)
+    if b.section not in AD_SECTIONS:
+        raise HTTPException(400, f"Invalid section. Allowed: {', '.join(AD_SECTIONS)}")
+    if b.duration_ms < 500 or b.duration_ms > 60000:
+        raise HTTPException(400, "duration_ms must be between 500 and 60000")
+    order = b.order
+    if order is None:
+        # Append: max order in section + 1
+        agg = await db.ad_slides.find({"section": b.section}, {"_id": 0, "order": 1}).sort("order", -1).to_list(1)
+        order = (agg[0]["order"] + 1) if agg else 1
+    doc = {
+        "id": str(uuid.uuid4()),
+        "section": b.section, "order": int(order),
+        "title": b.title, "subtitle": b.subtitle or "",
+        "image_url": b.image_url or "", "duration_ms": int(b.duration_ms),
+        "active": bool(b.active),
+        "created_at": now(), "updated_at": now(),
+        "created_by": me.get("user_id"),
+    }
+    await db.ad_slides.insert_one(dict(doc))
+    return _serialise_slide(doc)
+
+
+@api.patch("/admin/ads/slides/{sid}")
+async def admin_update_slide(sid: str, b: AdSlideUpdateIn, authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    update: dict = {"updated_at": now()}
+    if b.section is not None:
+        if b.section not in AD_SECTIONS:
+            raise HTTPException(400, "Invalid section")
+        update["section"] = b.section
+    if b.order is not None: update["order"] = int(b.order)
+    if b.title is not None: update["title"] = b.title
+    if b.subtitle is not None: update["subtitle"] = b.subtitle
+    if b.image_url is not None: update["image_url"] = b.image_url
+    if b.duration_ms is not None:
+        if b.duration_ms < 500 or b.duration_ms > 60000:
+            raise HTTPException(400, "duration_ms must be between 500 and 60000")
+        update["duration_ms"] = int(b.duration_ms)
+    if b.active is not None: update["active"] = bool(b.active)
+    r = await db.ad_slides.update_one({"id": sid}, {"$set": update})
+    if r.matched_count == 0:
+        raise HTTPException(404, "Slide not found")
+    fresh = await db.ad_slides.find_one({"id": sid}, {"_id": 0})
+    return _serialise_slide(fresh) if fresh else {}
+
+
+@api.delete("/admin/ads/slides/{sid}")
+async def admin_delete_slide(sid: str, authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    r = await db.ad_slides.delete_one({"id": sid})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Slide not found")
+    return {"deleted": True}
+
+
+@api.put("/admin/ads/reorder")
+async def admin_reorder_slides(b: AdReorderIn, authorization: Optional[str] = Header(None)):
+    """Bulk reorder: pass an ordered list of IDs. Each slide's `order` field is rewritten
+    to its index within its own section so the kiosk shows them in the requested sequence."""
+    await _require_admin(authorization)
+    # Map id -> section to recompute per-section order
+    docs = [d async for d in db.ad_slides.find({"id": {"$in": b.ids}}, {"_id": 0, "id": 1, "section": 1})]
+    sec_by_id = {d["id"]: d["section"] for d in docs}
+    counters: dict = {}
+    for sid in b.ids:
+        sec = sec_by_id.get(sid)
+        if not sec:
+            continue
+        counters[sec] = counters.get(sec, 0) + 1
+        await db.ad_slides.update_one({"id": sid}, {"$set": {"order": counters[sec], "updated_at": now()}})
+    return {"reordered": len(b.ids)}
+
+
+@api.put("/admin/ads/settings")
+async def admin_update_kiosk_settings(b: KioskSettingsIn, authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    update: dict = {"key": "kiosk", "updated_at": now()}
+    if b.idle_seconds is not None:
+        if b.idle_seconds < 5 or b.idle_seconds > 600:
+            raise HTTPException(400, "idle_seconds must be between 5 and 600")
+        update["idle_seconds"] = int(b.idle_seconds)
+    if b.loop is not None: update["loop"] = bool(b.loop)
+    if b.default_duration_ms is not None:
+        if b.default_duration_ms < 500 or b.default_duration_ms > 60000:
+            raise HTTPException(400, "default_duration_ms must be between 500 and 60000")
+        update["default_duration_ms"] = int(b.default_duration_ms)
+    if b.show_section_titles is not None:
+        update["show_section_titles"] = bool(b.show_section_titles)
+    await db.app_settings.update_one({"key": "kiosk"}, {"$set": update}, upsert=True)
+    return await _get_kiosk_settings()
+
+
+@api.get("/admin/ads/settings")
+async def admin_get_kiosk_settings(authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    return await _get_kiosk_settings()
 
 
 @api.get("/")
