@@ -1,4 +1,4 @@
-import { Tabs, Redirect } from "expo-router";
+import { Tabs } from "expo-router";
 import { Feather } from "@expo/vector-icons";
 import { BlurView } from "expo-blur";
 import { Platform, StyleSheet, View } from "react-native";
@@ -8,14 +8,9 @@ import { useI18n } from "@/src/i18n";
 import { isLoyaltyApp } from "@/src/appMode";
 
 export default function TabsLayout() {
-  const { t } = useI18n();
+  const { t, lang } = useI18n();
   const insets = useSafeAreaInsets();
-  // Route-gate: the customer-facing tabs (home / menu / reserve / account)
-  // do not exist on the loyalty subdomain. Send any deep-link straight to
-  // the kiosk slideshow so the tablet shows the promo loop immediately.
-  if (isLoyaltyApp()) {
-    return <Redirect href={"/kiosk" as any} />;
-  }
+  const loyalty = isLoyaltyApp();
   // Ensure the tab bar always clears the Android navigation gesture bar / 3-button bar.
   // Strategy: always add a fixed 16dp "lift" ON TOP of the OS-reported bottom inset.
   // On Samsung One UI specifically, when 3-button navigation is enabled some
@@ -53,17 +48,19 @@ export default function TabsLayout() {
           ),
       }}
     >
+      {/* HOME — on loyalty mode the tab is hidden; index.tsx itself redirects to /kiosk */}
       <Tabs.Screen
         name="index"
-        options={{
+        options={loyalty ? { href: null } : {
           title: t("home"),
           tabBarIcon: ({ color }) => <Feather name="home" size={20} color={color} />,
           tabBarButtonTestID: "tab-home",
         }}
       />
+      {/* MENU & RESERVE are customer-only — completely hidden on the loyalty tablet APK. */}
       <Tabs.Screen
         name="menu"
-        options={{
+        options={loyalty ? { href: null } : {
           title: t("menu"),
           tabBarIcon: ({ color }) => <Feather name="book-open" size={20} color={color} />,
           tabBarButtonTestID: "tab-menu",
@@ -71,17 +68,18 @@ export default function TabsLayout() {
       />
       <Tabs.Screen
         name="reserve"
-        options={{
+        options={loyalty ? { href: null } : {
           title: t("reserve"),
           tabBarIcon: ({ color }) => <Feather name="calendar" size={20} color={color} />,
           tabBarButtonTestID: "tab-reserve",
         }}
       />
+      {/* ACCOUNT — kept on BOTH variants. On loyalty it's the customer's loyalty card lobby. */}
       <Tabs.Screen
         name="account"
         options={{
-          title: t("account"),
-          tabBarIcon: ({ color }) => <Feather name="user" size={20} color={color} />,
+          title: loyalty ? (lang === "fr" ? "Fidélité" : "Loyalty") : t("account"),
+          tabBarIcon: ({ color }) => <Feather name={loyalty ? "award" : "user"} size={20} color={color} />,
           tabBarButtonTestID: "tab-account",
         }}
       />

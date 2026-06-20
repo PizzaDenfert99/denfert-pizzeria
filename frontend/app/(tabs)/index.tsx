@@ -4,15 +4,27 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, Redirect } from "expo-router";
 import { theme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
+import { isLoyaltyApp } from "@/src/appMode";
 import { isSupabaseConfigured, fetchRestaurantSettings } from "@/src/lib/supabase";
 
 const HERO_URI = "https://customer-assets.emergentagent.com/job_denfert-pizzeria/artifacts/8mhits89_file_00000000dfd471f4be6eb9f4ebd8e6bf.png";
 const RESTAURANT = "https://images.pexels.com/photos/4997894/pexels-photo-4997894.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=900&w=1200";
 
-export default function Home() {
+export default function HomeRoute() {
+  // Loyalty APK / loyalty subdomain — the customer landing screen does not
+  // exist here. Skip straight to the promotional kiosk.
+  // Conditional MUST live in this wrapper so the heavy Home() component below
+  // is unmounted entirely and react-hooks/rules-of-hooks is preserved.
+  if (isLoyaltyApp()) {
+    return <Redirect href={"/kiosk" as any} />;
+  }
+  return <Home />;
+}
+
+function Home() {
   const { t, lang, setLang } = useI18n();
   const router = useRouter();
   const [dynSettings, setDynSettings] = useState<{ phone?: string | null; address?: string | null } | null>(null);

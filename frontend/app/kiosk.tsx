@@ -52,7 +52,7 @@ export default function Kiosk() {
   const cur = slides[index];
 
   return (
-    <Pressable testID="kiosk-screen" onPress={() => router.replace("/")} style={[s.screen, { width, height }]}>
+    <Pressable testID="kiosk-screen" onPress={() => router.replace("/account" as any)} style={[s.screen, { width, height }]}>
       {/* Background image or gradient */}
       {cur.image_url ? (
         <Image source={{ uri: cur.image_url }} style={s.bgImage} resizeMode="cover" />
