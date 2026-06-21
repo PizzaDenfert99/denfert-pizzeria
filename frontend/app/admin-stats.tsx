@@ -4,15 +4,23 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, Redirect } from "expo-router";
 import { useAuth } from "@/src/auth-context";
 import { useI18n } from "@/src/i18n";
 import { api } from "@/src/api";
 import { theme } from "@/src/theme";
+import { isLoyaltyApp } from "@/src/appMode";
 
 type Period = "today" | "week" | "month" | "all";
 
-export default function AdminStats() {
+// Page-level guard: this screen lives on the loyalty tablet only. The main
+// admin must never reach it — redirect to home if the variant flag is off.
+export default function AdminStatsRoute() {
+  if (!isLoyaltyApp()) return <Redirect href={"/" as any} />;
+  return <AdminStats />;
+}
+
+function AdminStats() {
   const router = useRouter();
   const { user, loading } = useAuth();
   const { lang } = useI18n();

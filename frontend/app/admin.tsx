@@ -376,14 +376,6 @@ export default function AdminPanel() {
                       <Feather name="sliders" size={16} color={theme.color.brand} />
                       <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Paramètres" : "Settings"}</Text>
                     </Pressable>
-                    <Pressable
-                      testID="open-loyalty-app-btn"
-                      onPress={() => { if (Platform.OS === "web" && typeof window !== "undefined") { window.open("https://loyalty.pizzadenfert.fr/admin", "_blank"); } }}
-                      style={[styles.quickBtn, { borderColor: theme.color.brand, backgroundColor: "rgba(212,175,55,0.08)" }]}
-                    >
-                      <Feather name="award" size={16} color={theme.color.brand} />
-                      <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "App Fidélité ↗" : "Loyalty App ↗"}</Text>
-                    </Pressable>
                   </>
                 )}
 

@@ -3,11 +3,12 @@ import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable, TextI
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, Redirect } from "expo-router";
 import { useAuth } from "@/src/auth-context";
 import { useI18n } from "@/src/i18n";
 import { api } from "@/src/api";
 import { theme } from "@/src/theme";
+import { isLoyaltyApp } from "@/src/appMode";
 
 const ROLES = [
   { key: "owner", fr: "Propriétaire", en: "Owner", icon: "star" as const },
@@ -27,7 +28,12 @@ type StaffMember = {
   created_at: string | null;
 };
 
-export default function AdminStaff() {
+export default function AdminStaffRoute() {
+  if (!isLoyaltyApp()) return <Redirect href={"/" as any} />;
+  return <AdminStaff />;
+}
+
+function AdminStaff() {
   const router = useRouter();
   const { user, loading } = useAuth();
   const { lang } = useI18n();

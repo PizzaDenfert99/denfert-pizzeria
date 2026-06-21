@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from "react";
 import { View, Text, StyleSheet, Pressable, Image, ActivityIndicator, Platform, useWindowDimensions } from "react-native";
 import { Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, Redirect } from "expo-router";
 import { theme } from "@/src/theme";
 import { api, BASE } from "@/src/api";
+import { isLoyaltyApp } from "@/src/appMode";
 
 type Slide = {
   id: string; section: string; order: number; title: string; subtitle: string;
@@ -15,7 +16,14 @@ const SECTION_LABELS: Record<string, string> = {
   loyalty: "Club Fidélité", experience: "Notre Expérience", ingredients: "Nos Ingrédients",
 };
 
-export default function Kiosk() {
+// Page-level guard: the kiosk slideshow is reserved for the loyalty tablet
+// APK / loyalty subdomain. On the main customer app, redirect to home.
+export default function KioskRoute() {
+  if (!isLoyaltyApp()) return <Redirect href={"/" as any} />;
+  return <Kiosk />;
+}
+
+function Kiosk() {
   const router = useRouter();
   const { width, height } = useWindowDimensions();
   const [slides, setSlides] = useState<Slide[]>([]);

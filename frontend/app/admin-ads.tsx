@@ -2,13 +2,14 @@ import React, { useCallback, useEffect, useState } from "react";
 import { View, Text, StyleSheet, Pressable, ScrollView, TextInput, ActivityIndicator, Platform, Switch, Image } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, Redirect } from "expo-router";
 import { useAuth } from "@/src/auth-context";
 import { useI18n } from "@/src/i18n";
 import { api } from "@/src/api";
 import { theme } from "@/src/theme";
 import { pickImageFromGallery } from "@/src/imagePicker";
 import { getSupabase } from "@/src/lib/supabase";
+import { isLoyaltyApp } from "@/src/appMode";
 
 type Slide = { id: string; section: string; order: number; title: string; subtitle?: string;
   image_url: string; duration_ms: number; active: boolean };
@@ -20,7 +21,13 @@ const SECTIONS = [
   { key: "ingredients", fr: "Ingrédients" },
 ];
 
-export default function AdminAds() {
+// Page-level guard: ad management lives on the loyalty tablet only.
+export default function AdminAdsRoute() {
+  if (!isLoyaltyApp()) return <Redirect href={"/" as any} />;
+  return <AdminAds />;
+}
+
+function AdminAds() {
   const router = useRouter();
   const { user, loading } = useAuth();
   const { lang } = useI18n();
