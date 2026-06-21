@@ -3,13 +3,19 @@ import { View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable, TextI
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, Redirect } from "expo-router";
 import { useAuth } from "@/src/auth-context";
 import { useI18n } from "@/src/i18n";
 import { api } from "@/src/api";
 import { theme } from "@/src/theme";
+import { isLoyaltyApp } from "@/src/appMode";
 
-export default function AdminSettings() {
+export default function AdminSettingsRoute() {
+  if (!isLoyaltyApp()) return <Redirect href={"/" as any} />;
+  return <AdminSettings />;
+}
+
+function AdminSettings() {
   const router = useRouter();
   const { user, loading } = useAuth();
   const { lang } = useI18n();

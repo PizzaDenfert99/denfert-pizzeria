@@ -6,11 +6,12 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, Redirect } from "expo-router";
 import { useAuth } from "@/src/auth-context";
 import { useI18n } from "@/src/i18n";
 import { api } from "@/src/api";
 import { theme } from "@/src/theme";
+import { isLoyaltyApp } from "@/src/appMode";
 
 type Lang = "fr" | "en";
 type Period = "today" | "upcoming" | "past" | "all" | "range";
@@ -53,7 +54,15 @@ const fmtDate = (iso: string, lang: Lang) => {
   } catch { return iso; }
 };
 
-export default function AdminReservations() {
+// Page-level guard: reservations management belongs to the staff tablet
+// (loyalty/admin variant) only. The customer-facing app has no admin
+// surface, so any deep link here gets bounced to home.
+export default function AdminReservationsRoute() {
+  if (!isLoyaltyApp()) return <Redirect href={"/" as any} />;
+  return <AdminReservations />;
+}
+
+function AdminReservations() {
   const router = useRouter();
   const { user, loading } = useAuth();
   const { lang } = useI18n();

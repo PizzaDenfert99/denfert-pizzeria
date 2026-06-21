@@ -1,0 +1,39 @@
+{
+  "summary": "Iter10 validates the main-mode admin lockdown after the loyalty/main split. RESULT: ALL 4 acceptance criteria PASS. (1) Main-mode guards verified for ALL 8 routes — /admin, /admin-reservations, /admin-cms, /admin-settings, /admin-stats, /admin-staff, /admin-ads, /kiosk — every one redirects to / and renders the 'Pizza Denfert / Pizzeria artisanale franco-italienne / LYON' hero (no admin chrome whatsoever in the rendered HTML body). (2) Customer flows intact: / shows hero, /menu shows 'LA CARTE / Pizzas / Margherita…', /reserve shows the date+time picker, /account (logged out) shows the FIDÉLITÉ CLIENT eyebrow + 'Carte fidélité VIP' title + phone/name inputs + 'Recevoir le code' + Google CTA, and the 4-tab bottom bar (Accueil/Menu/Réserver/Compte) is present on every screen. (3) Staff shield button is gone: zero matches for [data-testid='staff-access-btn'] across the logged-out auth view. (4) Backend smoke: 8/8 pytest cases pass against EXPO_BACKEND_URL — admin login (200, is_admin=true) + /api/admin/reservations + /api/admin/settings/capacity + /api/admin/ads/slides + /api/admin/ads/settings + /api/admin/dashboard + /api/admin/staff + public /api/ads/slides + /api/menu. Note: there is no /api/admin/menu route (CMS is Supabase-backed via /api/menu) — adjusted test accordingly. No backend regressions. The loyalty native variant (APP_VARIANT=loyalty APK / loyalty.pizzadenfert.fr) cannot be exercised from the preview URL by design — out of scope per request.",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {
+        "component": "transitive deps (linear-gradient / safe-area-context)",
+        "issue": "Pre-existing console warning: 'props.pointerEvents is deprecated. Use style.pointerEvents'. Already reported in iter7-9; non-blocking."
+      },
+      {
+        "component": "expo-notifications (web)",
+        "issue": "Pre-existing console warning: '[expo-notifications] Listening to push token changes is not yet fully supported on web'. Expected on web preview, non-blocking."
+      }
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_admin_smoke_iter10.py",
+    "/app/test_reports/pytest/pytest_results_iter10.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "All 8 admin/kiosk route files now use the same top-level guard pattern: `if (!isLoyaltyApp()) return <Redirect href={'/' as any} />;` — clean and consistent (admin.tsx:25-27, admin-reservations.tsx:60-62, admin-cms/_layout.tsx:8-10, admin-settings.tsx:13-15, admin-stats.tsx:18-20, admin-staff.tsx:31-33, admin-ads.tsx:25-27, kiosk.tsx:21-23). Reduces drift risk.",
+    "src/appMode.ts is concise and correct — hostname check on web ('loyalty.pizzadenfert.fr' only), Constants.expoConfig.extra.variant for native. Defaults to 'main' which is the safe fallback.",
+    "account.tsx exposes LoyaltyStaffIcon (testID 'loyalty-staff-icon') only when isLoyaltyApp() && user signed in. The previous 'staff-access-btn' has been removed entirely from the logged-out auth view — confirmed by grep + DOM query. Spec satisfied.",
+    "admin.tsx remains ~670 LoC — still flagged from earlier iterations as candidate for split (login form + scanner + customer panel + REWARDS + history in one file). Non-blocking."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_admin_smoke_iter10.py"
+  ],
+  "success_rate": { "backend": "100% (8/8)", "frontend": "100% — all 12 navigation checks pass (8 redirects + 4 customer screens)" },
+  "seed_data_creation": "None.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Main-mode admin lockdown is fully in place via src/appMode.ts isLoyaltyApp() + Redirect guards at the top of every admin*/kiosk route. Backend admin endpoints are unchanged and respond 200 with admin Bearer token. There is intentionally NO /api/admin/menu endpoint — CMS is Supabase-backed and served through /api/menu. Loyalty variant must be smoke-tested via EAS staff APK build (production-loyalty-apk) — not possible from the preview URL. For future loyalty-side testing, the only DOM marker exposed in loyalty mode is testID='loyalty-staff-icon' inside the authenticated /account header.",
+  "rca_of_issue": "N/A — no bugs in this iteration."
+}

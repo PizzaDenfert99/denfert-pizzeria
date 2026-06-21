@@ -193,18 +193,6 @@ export default function Account() {
                     <Feather name="chrome" size={16} color={theme.color.onSurface} />
                     <Text style={styles.googleTxt}>{t("signInGoogle")}</Text>
                   </Pressable>
-
-                  {/* Staff-only entry to the in-app admin login. Discreet, no scary copy. */}
-                  <Pressable
-                    testID="staff-access-btn"
-                    onPress={() => router.push("/admin")}
-                    style={styles.staffAccessBtn}
-                  >
-                    <Feather name="shield" size={13} color={theme.color.brand} />
-                    <Text style={styles.staffAccessTxt}>
-                      {lang === "fr" ? "Accès admin / Staff" : "Admin / Staff access"}
-                    </Text>
-                  </Pressable>
                 </>
               ) : (
                 <>

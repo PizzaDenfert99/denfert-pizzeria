@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Pressable, TextInput, ActivityIndicator, Scroll
 import { SafeAreaView } from "react-native-safe-area-context";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
-import { useRouter } from "expo-router";
+import { useRouter, Redirect } from "expo-router";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useAuth } from "@/src/auth-context";
 import { useI18n } from "@/src/i18n";
@@ -18,7 +18,16 @@ const REWARDS = [
   { key: "margherita", fr: "Margherita offerte", en: "Free Margherita", count: 10, icon: "award" as const },
 ];
 
-export default function AdminPanel() {
+// Top-level route guard: the admin dashboard now lives EXCLUSIVELY in the
+// loyalty/admin app. On the customer Pizza Denfert app (main subdomain or
+// main APK) any visit to `/admin` is bounced back to home — staff use the
+// loyalty subdomain (loyalty.pizzadenfert.fr) or the dedicated staff APK.
+export default function AdminPanelRoute() {
+  if (!isLoyaltyApp()) return <Redirect href={"/" as any} />;
+  return <AdminPanel />;
+}
+
+function AdminPanel() {
   const router = useRouter();
   const { user, loading, signInEmail, signOut } = useAuth();
   const { t, lang } = useI18n();
@@ -361,45 +370,38 @@ export default function AdminPanel() {
               <Text style={[styles.sectionLbl, { marginTop: theme.space.xl }]}>{lang === "fr" ? "RACCOURCIS" : "QUICK ACTIONS"}</Text>
               <PushOptIn lang={lang as "fr" | "en"} />
               <View style={styles.quickGrid}>
-                {/* MAIN admin: reservations + menu + settings only */}
-                {!isLoyaltyApp() && (
-                  <>
-                    <Pressable testID="open-reservations-btn" onPress={() => router.push("/admin-reservations" as any)} style={styles.quickBtn}>
-                      <Feather name="calendar" size={16} color={theme.color.brand} />
-                      <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Réservations" : "Reservations"}</Text>
-                    </Pressable>
-                    <Pressable testID="open-cms-btn" onPress={() => router.push("/admin-cms")} style={styles.quickBtn}>
-                      <Feather name="grid" size={16} color={theme.color.brand} />
-                      <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Menu" : "Menu"}</Text>
-                    </Pressable>
-                    <Pressable testID="open-settings-btn" onPress={() => router.push("/admin-settings")} style={styles.quickBtn}>
-                      <Feather name="sliders" size={16} color={theme.color.brand} />
-                      <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Paramètres" : "Settings"}</Text>
-                    </Pressable>
-                  </>
-                )}
-
-                {/* LOYALTY admin: stats, staff, ads, settings — NO menu/reservations */}
-                {isLoyaltyApp() && (
-                  <>
-                    <Pressable testID="open-stats-btn" onPress={() => router.push("/admin-stats")} style={styles.quickBtn}>
-                      <Feather name="bar-chart-2" size={16} color={theme.color.brand} />
-                      <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Statistiques" : "Statistics"}</Text>
-                    </Pressable>
-                    <Pressable testID="open-staff-btn" onPress={() => router.push("/admin-staff")} style={styles.quickBtn}>
-                      <Feather name="users" size={16} color={theme.color.brand} />
-                      <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Personnel" : "Staff"}</Text>
-                    </Pressable>
-                    <Pressable testID="open-ads-btn" onPress={() => router.push("/admin-ads" as any)} style={styles.quickBtn}>
-                      <Feather name="image" size={16} color={theme.color.brand} />
-                      <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Publicités" : "Slideshow"}</Text>
-                    </Pressable>
-                    <Pressable testID="open-kiosk-btn" onPress={() => router.push("/kiosk" as any)} style={styles.quickBtn}>
-                      <Feather name="monitor" size={16} color={theme.color.brand} />
-                      <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Mode Kiosque" : "Kiosk Mode"}</Text>
-                    </Pressable>
-                  </>
-                )}
+                {/* The /admin route only renders on the loyalty/admin variant
+                    (top-level Redirect kicks main visitors back to /).
+                    These shortcuts give staff one-tap access to every
+                    management surface from the tablet dashboard. */}
+                <Pressable testID="open-reservations-btn" onPress={() => router.push("/admin-reservations" as any)} style={styles.quickBtn}>
+                  <Feather name="calendar" size={16} color={theme.color.brand} />
+                  <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Réservations" : "Reservations"}</Text>
+                </Pressable>
+                <Pressable testID="open-cms-btn" onPress={() => router.push("/admin-cms")} style={styles.quickBtn}>
+                  <Feather name="grid" size={16} color={theme.color.brand} />
+                  <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Menu" : "Menu"}</Text>
+                </Pressable>
+                <Pressable testID="open-settings-btn" onPress={() => router.push("/admin-settings")} style={styles.quickBtn}>
+                  <Feather name="sliders" size={16} color={theme.color.brand} />
+                  <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Paramètres" : "Settings"}</Text>
+                </Pressable>
+                <Pressable testID="open-stats-btn" onPress={() => router.push("/admin-stats")} style={styles.quickBtn}>
+                  <Feather name="bar-chart-2" size={16} color={theme.color.brand} />
+                  <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Statistiques" : "Statistics"}</Text>
+                </Pressable>
+                <Pressable testID="open-staff-btn" onPress={() => router.push("/admin-staff")} style={styles.quickBtn}>
+                  <Feather name="users" size={16} color={theme.color.brand} />
+                  <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Personnel" : "Staff"}</Text>
+                </Pressable>
+                <Pressable testID="open-ads-btn" onPress={() => router.push("/admin-ads" as any)} style={styles.quickBtn}>
+                  <Feather name="image" size={16} color={theme.color.brand} />
+                  <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Publicités" : "Slideshow"}</Text>
+                </Pressable>
+                <Pressable testID="open-kiosk-btn" onPress={() => router.push("/kiosk" as any)} style={styles.quickBtn}>
+                  <Feather name="monitor" size={16} color={theme.color.brand} />
+                  <Text style={styles.quickTxt} numberOfLines={1}>{lang === "fr" ? "Mode Kiosque" : "Kiosk Mode"}</Text>
+                </Pressable>
               </View>
             </View>
           )}
