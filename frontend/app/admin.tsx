@@ -419,7 +419,7 @@ function AdminPanel() {
                 </View>
                 <Pressable
                   testID="clear-customer-btn"
-                  onPress={() => { setCustomer(null); setError(null); lastScanRef.current = null; if (Platform.OS !== "web" && permission?.granted) setScanning(true); }}
+                  onPress={() => { setCustomer(null); setError(null); setPermissionRequested(false); lastScanRef.current = null; if (Platform.OS !== "web" && permission?.granted) setScanning(true); }}
                   style={styles.iconBtn}
                 >
                   <Feather name="x" size={18} color={theme.color.onSurfaceTertiary} />
@@ -665,4 +665,3 @@ const styles = StyleSheet.create({
   toast: { position: "absolute", bottom: 30, left: 20, right: 20, flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 8, padding: 14, borderRadius: theme.radius.md, backgroundColor: theme.color.surfaceTertiary, borderWidth: 1, borderColor: theme.color.brand },
   toastTxt: { color: theme.color.onSurface, fontSize: 13, fontWeight: "500" },
 });
-
