@@ -1,0 +1,31 @@
+{
+  "summary": "Independently verified the nginx routing fix for GET /api/menu/version on production VPS https://loyalty.pizzadenfert.fr. All 7 read-only HTTPS verification tests passed (7/7, 100%). /api/menu/version now returns HTTP 200 with the expected JSON schema {rev: int, count: int, updated_at: str|null}; consistency confirmed across 5 consecutive calls plus a 5-second-delayed retry (no flakiness, no cache effects). Auth-protected routes (/api/loyalty/me, /api/reservations/me) still return 401 properly, and /api/menu still returns a non-empty array. Response served as application/json via nginx 1.28.3 fronting FastAPI/uvicorn on the active backend (port 8001). Fix is LIVE and confirmed.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_menu_version_prod_fix.py",
+    "/app/test_reports/pytest/menu_version_prod_fix.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_menu_version_prod_fix.py"
+  ],
+  "success_rate": {
+    "backend": "100% (7/7 verification tests passed)",
+    "frontend": "N/A (frontend explicitly out of scope per review_request)"
+  },
+  "seed_data_creation": "None — read-only public HTTPS verification only.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Production VPS https://loyalty.pizzadenfert.fr backend routes are healthy. nginx vhost pizzadenfert-loyalty correctly proxies /api/ to 127.0.0.1:8001 (active pizzadenfert.service). The earlier 404 on /api/menu/version is fully resolved. Sandbox /app is unrelated to the production VPS (do NOT confuse the local services with production). For future regression, re-run pytest /app/backend/tests/test_menu_version_prod_fix.py.",
+  "rca_of_issue": "RCA (already diagnosed by main agent, now verified): nginx vhost pizzadenfert-loyalty was upstream-proxying /api/ to 127.0.0.1:8000 — a stale Jun-29 orphan uvicorn whose code predated the /api/menu/version route, returning 404 for that path while other routes happened to coexist. Fix applied: vhost upstream changed to 127.0.0.1:8001 (active pizzadenfert.service with current code), stale orphan killed, broken pizzadenfert-api.service masked, nginx reloaded. Verification (this run): 7 HTTPS test cases all pass — /api/menu/version returns 200 with body {\"rev\":0,\"count\":21,\"updated_at\":null}, consistent over 5 calls and over a 5s-delayed re-run, Content-Type application/json, Server nginx/1.28.3, while /api/menu remains 200 (21 items) and unauthenticated /api/loyalty/me and /api/reservations/me correctly return 401 {\"detail\":\"Missing token\"}. Mitigation already in place; no further action required."
+}
