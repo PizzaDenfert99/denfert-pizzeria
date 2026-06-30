@@ -83,6 +83,11 @@ android-sdk/
 .env
 .env.*
 *.env
+# Whitelist the customer app's production env — EXPO_PUBLIC_* values are
+# baked into the public JS bundle anyway (not secrets), and the build needs
+# this file to know which backend to talk to.
+!frontend/.env
+!frontend/.env.example
 credentials.json
 *.key
 .credentials
