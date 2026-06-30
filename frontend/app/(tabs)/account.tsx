@@ -1,12 +1,12 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Platform, KeyboardAvoidingView, RefreshControl } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Platform, KeyboardAvoidingView, RefreshControl, AppState } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { Feather } from "@expo/vector-icons";
 import * as WebBrowser from "expo-web-browser";
 import * as Linking from "expo-linking";
-import { useRouter } from "expo-router";
+import { useRouter, useFocusEffect } from "expo-router";
 import { Image as RNImage } from "react-native";
 import { useAuth } from "@/src/auth-context";
 import { useI18n } from "@/src/i18n";
@@ -52,6 +52,28 @@ export default function Account() {
   }, [user]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Real-time sync with the shared loyalty backend:
+  //   • Whenever the Account tab regains focus, refetch the loyalty card +
+  //     reservations so staff actions (e.g. QR scan → award pizza) show up.
+  //   • Poll every 20 s while the tab is open (kept cheap by the small
+  //     payload of /loyalty/me and /reservations/me).
+  //   • Re-sync when the app returns to the foreground after the user
+  //     unlocked the phone / switched back to the app.
+  // No backend changes required — these endpoints already exist and are the
+  // same data both apps see.
+  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(useCallback(() => {
+    if (!user) return;
+    const id = setInterval(load, 20000);
+    return () => clearInterval(id);
+  }, [user, load]));
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (st) => {
+      if (st === "active") load();
+    });
+    return () => sub.remove();
+  }, [load]);
 
   const requestOtp = async () => {
     setErr(null);
