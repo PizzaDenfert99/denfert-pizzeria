@@ -1,0 +1,31 @@
+{
+  "summary": "Re-verification of nginx routing fix on production https://loyalty.pizzadenfert.fr. Ran 7 read-only HTTPS pytest cases (per review_request) — ALL 7 PASSED (100%). GET /api/menu/version returns HTTP 200 with body {\"rev\":0,\"count\":21,\"updated_at\":null} (all required keys present, correct types). /api/menu returns 200 with a 21-item non-empty array. /api/loyalty/me and /api/reservations/me correctly return 401 without auth. Frontend SPA root / returns 200. Spaced sampling: /api/menu/version returned 200 both immediately and after a 10s wait — no flakiness. Response time of /api/menu/version measured at ~0.39s end-to-end (well under the 2.0s health gate). Backend is fully online; fix from iteration 11 remains live. No code or config changes were made.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_menu_version_reverify.py",
+    "/app/test_reports/pytest/menu_version_reverify_iter12.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [],
+  "updated_files": [
+    "/app/backend/tests/test_menu_version_reverify.py"
+  ],
+  "success_rate": {
+    "backend": "100% (7/7 verification tests passed)",
+    "frontend": "N/A (only SPA root smoke-check was in scope; returns 200)"
+  },
+  "seed_data_creation": "None — read-only public HTTPS verification only.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Production VPS https://loyalty.pizzadenfert.fr backend remains healthy. /api/menu/version is consistently 200 with schema {rev:int, count:int, updated_at:str|null}. Auth-protected /api/loyalty/me and /api/reservations/me still return 401 as expected. SPA root / returns 200. Response time ~0.39s. Reusable regression file: /app/backend/tests/test_menu_version_reverify.py — run via `pytest /app/backend/tests/test_menu_version_reverify.py -v` for future spot checks.",
+  "rca_of_issue": "No new issue. Re-verification per user concern after recent nginx fix (iteration 11). Confirmed: nginx vhost pizzadenfert-loyalty correctly proxies /api/ to FastAPI on 127.0.0.1:8001; /api/menu/version is reachable, returns expected JSON in <0.5s, and is consistent across a 10-second spaced sample. No mitigation required."
+}
