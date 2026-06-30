@@ -40,6 +40,10 @@ export const api = {
   me: () => req("/auth/me"),
   logout: () => req("/auth/logout", { method: "POST" }),
   menu: () => req("/menu"),
+  // Live sync signal — the shared backend bumps a revision counter on every
+  // CMS menu write. The customer menu screen polls this every 20s and only
+  // refetches the full /menu when the revision changes. Cheap & idempotent.
+  menuVersion: (): Promise<{ revision: number; updated_at?: string }> => req("/menu/version"),
   createReservation: (data: any) => req("/reservations", { method: "POST", body: JSON.stringify(data) }),
   createGuestReservation: (data: any) => req("/reservations/guest", { method: "POST", body: JSON.stringify(data) }),
   myReservations: () => req("/reservations/me"),

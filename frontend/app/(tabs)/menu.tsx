@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, FlatList, Pressable } from "react-native";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, FlatList, Pressable, RefreshControl, AppState } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
 import { useI18n } from "@/src/i18n";
@@ -15,12 +16,59 @@ export default function MenuScreen() {
   const [items, setItems] = useState<any[]>([]);
   const [cat, setCat] = useState<Cat>("pizzas");
   const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  // Tracks the menu revision (bumped by the loyalty backend on every CMS write).
+  // Comparing this against the latest revision lets us skip the full /menu
+  // refetch when nothing changed — cheap polling, zero visible flicker.
+  const revRef = useRef<number | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    try { setItems(await api.menu()); } finally { setLoading(false); }
+  // Pulls the menu from the shared loyalty backend (single source of truth).
+  // `spinner` shows the centered loader only on the very first load; all
+  // subsequent background refreshes update silently.
+  const fetchMenu = useCallback(async (spinner = false) => {
+    if (spinner) setLoading(true);
+    try {
+      setItems(await api.menu());
+      try {
+        const v = await api.menuVersion();
+        if (v) revRef.current = (v as any).rev ?? null;
+      } catch {
+        // The backend may not expose /menu/version yet (older deploy). We
+        // silently fall back to manual pull-to-refresh in that case.
+      }
+    } finally { if (spinner) setLoading(false); }
   }, []);
-  useEffect(() => { load(); }, [load]);
+
+  // Lightweight sync probe — refetch the full menu only when the CMS revision
+  // changed. Same call gracefully no-ops if the endpoint is missing.
+  const refreshIfChanged = useCallback(async () => {
+    try {
+      const v = await api.menuVersion();
+      if (v && (v as any).rev !== revRef.current) await fetchMenu(false);
+    } catch {
+      // ignore — keep the menu we already have
+    }
+  }, [fetchMenu]);
+
+  // Initial load when the screen first mounts.
+  useEffect(() => { fetchMenu(true); }, [fetchMenu]);
+
+  // On focus (user navigates back to the tab) — refetch only if CMS changed.
+  useFocusEffect(useCallback(() => { refreshIfChanged(); }, [refreshIfChanged]));
+
+  // While the tab is focused, poll the version every 20 s. Cleared on blur.
+  useFocusEffect(useCallback(() => {
+    const id = setInterval(refreshIfChanged, 20000);
+    return () => clearInterval(id);
+  }, [refreshIfChanged]));
+
+  // When the app returns to foreground (mobile lock-screen ↑), check again.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (st) => {
+      if (st === "active") refreshIfChanged();
+    });
+    return () => sub.remove();
+  }, [refreshIfChanged]);
 
   const filtered = useMemo(() => items.filter((i) => i.category === cat), [items, cat]);
 
@@ -51,6 +99,17 @@ export default function MenuScreen() {
         <FlatList
           data={filtered}
           keyExtractor={(i) => i.id}
+          refreshControl={
+            <RefreshControl
+              refreshing={refreshing}
+              tintColor={theme.color.brand}
+              onRefresh={async () => {
+                setRefreshing(true);
+                await fetchMenu(false);
+                setRefreshing(false);
+              }}
+            />
+          }
           contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 140, paddingTop: theme.space.md }}
           renderItem={({ item }) => {
             const desc = lang === "fr" ? item.desc_fr : item.desc_en;
