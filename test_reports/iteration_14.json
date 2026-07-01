@@ -1,0 +1,56 @@
+{
+  "summary": "END-TO-END SYNC VERIFIED across both hostnames after the api.pizzadenfert.fr nginx vhost + SSL cert were provisioned. 19/20 tests PASS; the 1 SKIP is best-effort cleanup of the test reservation because the backend exposes no DELETE endpoint for reservations (see notes). Menu writes on api.pizzadenfert.fr appear on loyalty.pizzadenfert.fr and vice-versa; guest reservations created on loyalty.pizzadenfert.fr appear in admin lists on both hosts; menu/version count bumps correctly (21 -> 22 -> 21). CORS preflight works from both loyalty and customer origins (Access-Control-Allow-Origin echoes the request origin). TLS cert for api.pizzadenfert.fr is valid with correct SAN.",
+  "per_test_results": {
+    "test_01_get_menu_loyalty": "PASS (200, array len=21)",
+    "test_02_get_menu_api": "PASS (200, array)",
+    "test_03_menu_bodies_identical": "PASS (byte-equal JSON on both hosts)",
+    "test_04_menu_version_bodies_identical": "PASS (baseline {rev:0, count:21, updated_at:null} on both)",
+    "test_05_cors_preflight_loyalty_origin": "PASS (ACAO=https://loyalty.pizzadenfert.fr, ACAM includes GET, ACAC=true)",
+    "test_06_cors_preflight_customer_origin": "PASS (ACAO=https://pizzadenfert.fr)",
+    "test_07_tls_cert_san_api_host": "PASS (curl without -k succeeds; SAN includes api.pizzadenfert.fr — verified via ssl.getpeercert())",
+    "test_08_admin_reservations_unauth_401": "PASS (401)",
+    "test_09_admin_menu_unauth_401": "PASS (401)",
+    "test_10_admin_login": "PASS — endpoint is POST /api/auth/login (NOT /api/admin/login). Response schema: {token: '<jwt>', user: {user_id, email, name, is_admin: true, pizza_count, qr_token, rewards_redeemed, rewards_history, created_at}}",
+    "test_11_create_menu_item_on_api_host": "PASS (POST https://api.pizzadenfert.fr/api/admin/menu with body {category:'pizzas', name:'__SYNC_TEST_ITEM__', price:9.99} → 201 with id)",
+    "test_12_new_item_visible_on_loyalty_host": "PASS (item found in GET https://loyalty.pizzadenfert.fr/api/menu)",
+    "test_13_new_item_visible_on_api_host": "PASS (item found in GET https://api.pizzadenfert.fr/api/menu)",
+    "test_14_menu_version_incremented": "PASS (count 21 → 22 after write)",
+    "test_15_delete_menu_item": "PASS (DELETE https://api.pizzadenfert.fr/api/admin/menu/<id> → 200)",
+    "test_16_item_removed_from_both_hosts": "PASS (item no longer present in GET /api/menu on either host)",
+    "test_17_create_guest_reservation_on_loyalty": "PASS — required body key is `guests` (not `people`). Sent {date:'2026-08-15', time:'19:30', zone:'indoor', name:'__SYNC_TEST_GUEST__', phone:'+33600000123', guests:2} → 200",
+    "test_18_reservation_visible_via_api_host": "PASS (found via GET https://api.pizzadenfert.fr/api/admin/reservations?period=all)",
+    "test_19_reservation_visible_via_loyalty_host": "PASS (also visible via GET https://loyalty.pizzadenfert.fr/api/admin/reservations?period=all)",
+    "test_20_cleanup_reservation": "SKIPPED — no reservation DELETE endpoint. Tried DELETE /api/admin/reservations/{id} (405), /api/reservations/{id} (404), PATCH …/cancel (404), PATCH …/status (404). Nginx OPTIONS advertises DELETE but the FastAPI app itself rejects with 405. Leftover reservation id=9410590d-336d-43fd-a76b-f3d41bebded6, name=__SYNC_TEST_GUEST__, date=2026-08-15 19:30 — main agent should either add a DELETE endpoint or remove this record directly from the DB."
+  },
+  "admin_login_endpoint": {
+    "url": "POST https://loyalty.pizzadenfert.fr/api/auth/login  (also works on https://api.pizzadenfert.fr/api/auth/login)",
+    "request_schema": {"email": "admin@pizzadenfert.fr", "password": "Admin1234!"},
+    "response_schema": {"token": "JWT (HS256)", "user": {"user_id": "string", "email": "string", "name": "string", "is_admin": "bool", "pizza_count": "int", "qr_token": "string", "rewards_redeemed": "array", "rewards_history": "array", "created_at": "iso8601"}},
+    "notes": "Tried /api/admin/login (404), /api/admin/auth/login (404), /api/login (404). Only /api/auth/login works."
+  },
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "DELETE /api/admin/reservations/{id}", "issue": "Route responds 405 Method Not Allowed — no DELETE handler even though nginx advertises the method in OPTIONS. Consider adding a soft-delete/cancel endpoint so admin CMS can remove test/spam reservations."},
+      {"endpoint": "POST /api/reservations/guest", "issue": "Payload field is `guests` (int). Docs/user request said `people` — worth aligning naming across the API or accepting both aliases via Pydantic."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": [], "react_native_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_dual_host_sync_iter14.py",
+    "/app/test_reports/pytest/iteration_14_results.xml"
+  ],
+  "action_items": [
+    "Optionally add a DELETE /api/admin/reservations/{id} endpoint (or a cancel/status update endpoint) so admin can remove reservations.",
+    "Consider accepting `people` as an alias for `guests` in POST /api/reservations/guest to match public docs / prior E1 spec.",
+    "Manually purge leftover test reservation id=9410590d-336d-43fd-a76b-f3d41bebded6 (name=__SYNC_TEST_GUEST__, date=2026-08-15 19:30) — sandbox has no way to remove it."
+  ],
+  "critical_code_review_comments": [],
+  "updated_files": ["/app/backend/tests/test_dual_host_sync_iter14.py"],
+  "success_rate": {"backend": "95% (19/20 — 1 skip is not a bug, it's a missing endpoint documented above)", "frontend": "N/A (backend-only verification)"},
+  "seed_data_creation": "Test reservation __SYNC_TEST_GUEST__ (id 9410590d-336d-43fd-a76b-f3d41bebded6, 2026-08-15 19:30, phone +33600000123) COULD NOT be cleaned up because no reservation DELETE endpoint exists. Menu item __SYNC_TEST_ITEM__ was created AND successfully deleted.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Both hostnames (loyalty.pizzadenfert.fr and api.pizzadenfert.fr) now front the same FastAPI backend correctly. api.pizzadenfert.fr has a valid Let's Encrypt cert with proper SAN, correct CORS headers echoing $http_origin, and proxies /api/* to the same upstream. Admin login lives at /api/auth/login (not /api/admin/login). Reservation payload uses `guests` not `people`. There is NO reservation DELETE endpoint.",
+  "rca_of_issue": "Original user report (menu writes from Loyalty admin not visible in customer app; reservations from customer app not visible in Loyalty admin) was caused by the Loyalty SPA hitting https://api.pizzadenfert.fr — a subdomain that had no nginx vhost and no SSL cert, so every write silently failed. Main agent added the nginx vhost + Let's Encrypt cert for api.pizzadenfert.fr and pointed it at the same FastAPI upstream on 127.0.0.1:8001 with CORS headers that echo Origin for both loyalty and customer origins. This iteration performed real write-then-read round-trips across both hostnames and confirmed the two now sit on the same backend/DB with fully working CORS and TLS. SYNC IS WORKING END-TO-END."
+}
