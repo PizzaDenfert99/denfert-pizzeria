@@ -1,0 +1,103 @@
+{
+  "summary": "SYNC STILL BROKEN AT UI LEVEL. Real-browser Playwright drove production URLs and confirmed that api.pizzadenfert.fr emits duplicated Access-Control-Allow-Origin headers on non-OPTIONS responses, which every modern browser refuses. Consequence: NO browser (customer app pizzadenfert.fr, admin console admin.pizzadenfert.fr, or loyalty kiosk loyalty.pizzadenfert.fr) can successfully POST/GET against api.pizzadenfert.fr. Iteration_14's curl-based 'verified' status was a false positive — curl ignores CORS. Two ACAO headers are being emitted simultaneously: '*' (from FastAPI CORSMiddleware) AND the echoed request Origin (from nginx add_header ... always).",
+  "final_verdict": "SYNC STILL BROKEN AT UI LEVEL: duplicated Access-Control-Allow-Origin headers ('*' from FastAPI + '<origin>' from nginx) on GET/POST responses cause all browsers to block every fetch to api.pizzadenfert.fr.",
+  "cors_evidence": {
+    "curl_repro": "curl -sI -H 'Origin: https://pizzadenfert.fr' https://api.pizzadenfert.fr/api/menu",
+    "response_headers_observed": [
+      "access-control-allow-origin: *",
+      "access-control-allow-origin: https://pizzadenfert.fr",
+      "access-control-allow-credentials: true",
+      "access-control-allow-credentials: true"
+    ],
+    "browser_console_messages": [
+      "Access to fetch at 'https://api.pizzadenfert.fr/api/reservations/availability?date=2026-07-01&time=20%3A00' from origin 'https://pizzadenfert.fr' has been blocked by CORS policy: The 'Access-Control-Allow-Origin' header contains multiple values '*, https://pizzadenfert.fr', but only one is allowed.",
+      "Access to fetch at 'https://api.pizzadenfert.fr/api/reservations/guest' from origin 'https://pizzadenfert.fr' has been blocked by CORS policy: same reason.",
+      "Access to fetch at 'https://api.pizzadenfert.fr/api/auth/login' from origin 'https://admin.pizzadenfert.fr' has been blocked by CORS policy: The 'Access-Control-Allow-Origin' header contains multiple values '*, https://admin.pizzadenfert.fr', but only one is allowed."
+    ],
+    "why_iteration_14_missed_it": "iteration_14 verified CORS only on OPTIONS preflight (which nginx short-circuits and only emits one ACAO). It never issued the *actual* GET/POST from a browser, so it missed that FastAPI's CORSMiddleware ALSO adds its own ACAO on 2xx/4xx responses, resulting in TWO ACAO headers on real requests."
+  },
+  "test1_menu_edit_cms_to_customer_app": {
+    "status": "FAIL",
+    "steps": {
+      "1a_open_loyalty": "PASS — https://loyalty.pizzadenfert.fr loads a customer-facing kiosk page (redirects to /kiosk). No admin/CMS UI is exposed on the loyalty subdomain at all. /admin, /admin/menu, /admin-cms, /login, /cms, /backoffice, /admin-menu all return nginx 404. /admin-cms redirected to admin.pizzadenfert.fr/admin-cms (Supabase-Auth login — different auth system, credentials Admin1234! rejected there).",
+      "1b_login_flow": "FAIL — Only viable admin login is via https://admin.pizzadenfert.fr/account -> click 'Accès admin / Staff' (testid staff-access-btn) -> /admin route with admin-email-input / admin-password-input / admin-login-btn testids (FastAPI-backed). Submitting admin@pizzadenfert.fr / Admin1234! triggers POST https://api.pizzadenfert.fr/api/auth/login. Response is BLOCKED by the browser (CORS: 2× ACAO). UI shows 'Identifiants invalides' (misleading — actual failure is network/CORS, not credentials).",
+      "1c_navigate_to_cms": "BLOCKED — cannot reach any admin CMS panel because admin login itself fails at the network layer.",
+      "1d_add_menu_item": "BLOCKED — never reached.",
+      "1e_verify_success_toast": "BLOCKED — never reached.",
+      "1f_capture_network_request_url": "OBSERVED but blocked. Only login request was fired: POST https://api.pizzadenfert.fr/api/auth/login (blocked by CORS in browser).",
+      "1g_open_customer_app": "PASS — https://pizzadenfert.fr loads the customer SPA.",
+      "1h_navigate_menu": "PASS — tab-menu shows the LIVE menu with items rendered (menu-item-<uuid> testids). It appears an initial GET /api/menu succeeded before the CORS regression hit newer requests — likely served from a service-worker/HTTP cache or one of the responses slipped through when only 1 ACAO was emitted. Reservation/availability/POST calls (later in the same session) DO fail with CORS.",
+      "1i_verify_new_item_visible": "BLOCKED — item was never created.",
+      "1j_cleanup": "N/A",
+      "1k_verify_deleted": "N/A"
+    }
+  },
+  "test2_reservation_customer_to_admin": {
+    "status": "FAIL",
+    "steps": {
+      "2a_open_customer_app": "PASS — https://pizzadenfert.fr loaded (home-screen testid).",
+      "2b_navigate_reserve": "PASS — /reserve route with full reservation form (reserve-screen testid, date-2026-07-14, time-20:00, zone-indoor, guests-minus/plus, res-name-input, res-phone-input, res-notes-input, reserve-submit-btn).",
+      "2c_fill_and_submit": "PARTIAL — form filled with name=E2E_UI_RES_1782915992, phone=+33600000199, guests=2, zone=indoor, date=2026-07-14, time=20:00. reserve-submit-btn clicked.",
+      "2d_success_message": "FAIL — UI displays red error 'Failed to fetch' next to the submit button. No confirmation shown.",
+      "2e_network_request_url": "OBSERVED. Two calls fired: GET https://api.pizzadenfert.fr/api/reservations/availability?date=2026-07-14&time=20%3A00 AND POST https://api.pizzadenfert.fr/api/reservations/guest. BOTH blocked by browser CORS policy. Server did respond (nginx logs would show 2×× / 4××) but the browser refuses to expose the response body, so the SPA gets 'TypeError: Failed to fetch'.",
+      "2f_login_loyalty_admin": "BLOCKED — see Test 1: admin login on admin.pizzadenfert.fr fails at CORS layer.",
+      "2g_navigate_reservations_admin": "BLOCKED",
+      "2h_verify_reservation_visible": "BLOCKED — reservation was never persisted (POST blocked before it reached FastAPI at the browser layer). NB: the server-side write actually happens (nginx forwards the request, FastAPI writes to Mongo) — only the response is blocked by CORS. So the reservation may still land in the DB even though the UI reports failure. This is a subtle side effect the main agent must be aware of when cleaning up.",
+      "2i_screenshot": "Captured at /app/test_reports/screenshots_iter15/11_reserve_after_submit.png",
+      "2j_cleanup": "SKIPPED — cannot access admin UI to delete. If the POST actually persisted server-side (see 2h), there is now a leftover reservation named E2E_UI_RES_1782915992 in the DB, plus the leftover __SYNC_TEST_GUEST__ from iteration_14 (id 9410590d-336d-43fd-a76b-f3d41bebded6)."
+    }
+  },
+  "backend_issues": {
+    "critical": [
+      {"endpoint": "ALL /api/* GET & POST responses on api.pizzadenfert.fr", "issue": "Duplicated Access-Control-Allow-Origin headers (one '*' from FastAPI CORSMiddleware, one echoed origin from nginx add_header). Every browser rejects the response with 'multiple values ... but only one is allowed'. Effectively no browser can call the API. Fix: remove either the FastAPI-side CORSMiddleware OR the nginx add_header block for /api/*. Recommended: keep FastAPI-side CORS with an explicit allow_origins list [https://pizzadenfert.fr, https://admin.pizzadenfert.fr, https://loyalty.pizzadenfert.fr] and delete the nginx add_header Access-Control-* directives for the api.pizzadenfert.fr vhost (or vice-versa). Also DELETE any duplicate access-control-allow-credentials.", "priority": "CRITICAL"}
+    ],
+    "minor": [
+      {"endpoint": "admin.pizzadenfert.fr/admin-cms", "issue": "This CMS uses Supabase Auth (POST to https://vgpkxuwcvpkdqgpxnhlu.supabase.co/auth/v1/token). The FastAPI admin credentials from /app/memory/test_credentials.md do NOT work there. Either (a) provision the admin@pizzadenfert.fr / Admin1234! user in Supabase too, (b) migrate /admin-cms to use the FastAPI /api/auth/login backend, or (c) document the Supabase credentials in test_credentials.md. Right now iteration_14's 'admin CMS' claim is unverifiable — there are TWO admin auth stacks."},
+      {"endpoint": "loyalty.pizzadenfert.fr", "issue": "This subdomain is a *kiosk-only* SPA (nginx returns 404 for /admin, /admin-cms, /login, /cms, /backoffice, /admin-menu, /admin-reservations). The user-facing review request assumes loyalty.pizzadenfert.fr hosts the admin CMS; it does not — the admin CMS actually lives on admin.pizzadenfert.fr. Either add CMS routes to loyalty or update the docs."},
+      {"endpoint": "POST /api/reservations/guest", "issue": "When the browser blocks the response with CORS, the server-side write may still have succeeded (nginx forwards before it adds headers). Result: user sees 'Failed to fetch' but the reservation IS in the DB. This double-writes-on-retry risk is a data-integrity concern until CORS is fixed."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminLoginScreen (admin-login-btn)", "issue": "On CORS failure, UI shows 'Identifiants invalides' which is misleading — the actual failure is a network/CORS block, not wrong credentials. Recommend surfacing the true error (TypeError: Failed to fetch) or a generic 'Impossible de contacter le serveur'.", "testID": "admin-login-btn", "priority": "MEDIUM"},
+      {"component": "ReserveScreen (reserve-submit-btn)", "issue": "Displays raw 'Failed to fetch' error text — needs a translated, user-friendly error message. Also, the reservation may have actually persisted server-side despite the fetch error — the UI should not encourage the user to retry, causing duplicates.", "testID": "reserve-submit-btn", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [
+      {"flow": "customer-app -> api.pizzadenfert.fr (menu / reservations / availability)", "issue": "All non-OPTIONS responses are blocked by browser due to duplicated Access-Control-Allow-Origin headers.", "affected_testIDs": ["reserve-submit-btn", "menu-screen"]},
+      {"flow": "admin-app -> api.pizzadenfert.fr (login)", "issue": "POST /api/auth/login blocked by same CORS misconfig.", "affected_testIDs": ["admin-login-btn"]}
+    ],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots_iter15/01_loyalty_home.png",
+    "/app/test_reports/screenshots_iter15/02_admin_cms.png (Supabase login page)",
+    "/app/test_reports/screenshots_iter15/03_cms_after_login.png (Supabase 'Invalid login credentials')",
+    "/app/test_reports/screenshots_iter15/05_admin_account.png",
+    "/app/test_reports/screenshots_iter15/06_staff_modal.png (FastAPI admin login form)",
+    "/app/test_reports/screenshots_iter15/07_admin_after_login.png ('Identifiants invalides' due to CORS)",
+    "/app/test_reports/screenshots_iter15/08_customer_home.png",
+    "/app/test_reports/screenshots_iter15/09_customer_menu.png",
+    "/app/test_reports/screenshots_iter15/10_customer_reserve.png",
+    "/app/test_reports/screenshots_iter15/11_reserve_after_submit.png ('Failed to fetch')"
+  ],
+  "action_items": [
+    "URGENT: Fix duplicated Access-Control-Allow-Origin headers on api.pizzadenfert.fr. Options: (a) delete `add_header Access-Control-Allow-Origin $http_origin always;` and related add_header lines from nginx vhost for api.pizzadenfert.fr and let FastAPI CORSMiddleware serve them, ensuring FastAPI's allow_origins is set to the explicit list [https://pizzadenfert.fr, https://admin.pizzadenfert.fr, https://loyalty.pizzadenfert.fr] with allow_credentials=True. OR (b) remove CORSMiddleware from FastAPI and keep the nginx block, but change nginx to not set duplicates when FastAPI already emits any Access-Control-* header. Verify with: `curl -sI -H 'Origin: https://pizzadenfert.fr' https://api.pizzadenfert.fr/api/menu` -> expect exactly ONE `access-control-allow-origin`.",
+    "Clarify which admin CMS is authoritative: admin.pizzadenfert.fr/admin-cms (Supabase Auth) or admin.pizzadenfert.fr/admin (FastAPI). Either sync users across both or retire one. Update /app/memory/test_credentials.md accordingly.",
+    "Consider adding admin CMS routes on loyalty.pizzadenfert.fr as the review request assumed, OR update product/user-facing docs to reflect that admin CMS lives on admin.pizzadenfert.fr.",
+    "In ReserveScreen and AdminLoginScreen, replace raw 'Failed to fetch' / misleading 'Identifiants invalides' with a user-friendly network-error message when the fetch throws (TypeError: Failed to fetch).",
+    "Check MongoDB for potential leftover E2E_UI_RES_1782915992 reservation (guest, phone +33600000199, date 2026-07-14 20:00, zone indoor) — the server-side write may have gone through even though the browser blocked the response. Also still-pending cleanup for iteration_14 leftover: reservation id 9410590d-336d-43fd-a76b-f3d41bebded6 (__SYNC_TEST_GUEST__).",
+    "After the CORS fix, re-run this iteration's Playwright script to complete Test 1 (menu create -> visible on customer) and Test 2 (reservation -> visible in admin)."
+  ],
+  "critical_code_review_comments": [
+    "The CORS regression is a textbook case of double-configuring a cross-cutting concern in both the app layer (FastAPI CORSMiddleware) and the edge layer (nginx add_header ... always). Pick ONE layer, never both.",
+    "iteration_14 declared the sync 'VERIFIED END-TO-END' on the basis of curl tests. curl does not enforce CORS. Any browser-facing verification must use a real browser (Playwright) — please do not accept curl as proof of browser-facing behaviour going forward."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "N/A (API-only tests were already passed in iter_14; UI proves the API is unreachable from browsers)", "frontend": "0% (both required UI flows blocked by CORS)"},
+  "seed_data_creation": "Possibly one E2E reservation E2E_UI_RES_1782915992 (name), phone +33600000199, date 2026-07-14 20:00, zone indoor — the browser blocked the response but the server-side write may have succeeded. Also carrying over iteration_14 leftover __SYNC_TEST_GUEST__ (id 9410590d-336d-43fd-a76b-f3d41bebded6).",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "After the CORS duplication fix, redo the two flows via Playwright on production URLs. Key routes discovered: admin login is at admin.pizzadenfert.fr/account -> click testid=staff-access-btn -> testid=admin-email-input / admin-password-input / admin-login-btn. Reservation flow is on pizzadenfert.fr/reserve with testids reserve-submit-btn, res-name-input, res-phone-input, date-YYYY-MM-DD, time-HH:MM, zone-indoor, guests-plus/minus. Verify: `curl -sI -H 'Origin: https://pizzadenfert.fr' https://api.pizzadenfert.fr/api/menu` should return EXACTLY one access-control-allow-origin header.",
+  "rca_of_issue": "ROOT CAUSE: On api.pizzadenfert.fr, BOTH nginx and FastAPI add CORS headers to non-OPTIONS responses. nginx has `add_header Access-Control-Allow-Origin $http_origin always;` in its vhost (introduced in iteration_14 to fix the missing api.pizzadenfert.fr host). FastAPI ALSO has CORSMiddleware(allow_origins=['*']) already installed at app startup. When the request reaches FastAPI, FastAPI adds `Access-Control-Allow-Origin: *`; on the way back through nginx, nginx APPENDS another `Access-Control-Allow-Origin: <origin>` because of the `always` flag. Browsers see two ACAO values on the same response and reject the fetch. Curl succeeds because it does not enforce CORS. OPTIONS preflight worked in iter_14 because nginx handles OPTIONS itself and shortcuts before FastAPI, producing only one ACAO. REPRODUCTION: `curl -sI -H 'Origin: https://pizzadenfert.fr' https://api.pizzadenfert.fr/api/menu | grep -i allow-origin` returns two lines. MITIGATION: Remove one of the two CORS emitters. Cleanest is to (a) remove the nginx add_header block for /api/*  and let FastAPI (with an explicit allow_origins list including https://pizzadenfert.fr, https://admin.pizzadenfert.fr, https://loyalty.pizzadenfert.fr) be the single source of truth, then reload nginx and restart FastAPI. Verify with the curl one-liner above expecting a single ACAO header, then re-run the Playwright UI tests."
+}
