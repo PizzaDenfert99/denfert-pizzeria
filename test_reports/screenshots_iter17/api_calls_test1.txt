@@ -1,0 +1,2 @@
+POST https://vgpkxuwcvpkdqgpxnhlu.supabase.co/auth/v1/token?grant_type=password
+GET https://vgpkxuwcvpkdqgpxnhlu.supabase.co/rest/v1/restaurant_settings?select=*&limit=1

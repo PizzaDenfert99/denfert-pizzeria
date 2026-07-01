@@ -1,0 +1,6 @@
+GET https://vgpkxuwcvpkdqgpxnhlu.supabase.co/rest/v1/restaurant_settings?select=*&limit=1
+GET https://vgpkxuwcvpkdqgpxnhlu.supabase.co/rest/v1/categories?select=*&is_active=eq.true&order=sort_order.asc
+GET https://vgpkxuwcvpkdqgpxnhlu.supabase.co/rest/v1/menu_items?select=*&is_active=eq.true&order=sort_order.asc
+GET https://vgpkxuwcvpkdqgpxnhlu.supabase.co/storage/v1/object/public/menu-images/menu_items/4c209fad-2372-4c8c-8daa-608fbb1b8a35/1781563248159_original.png
+GET https://vgpkxuwcvpkdqgpxnhlu.supabase.co/storage/v1/object/public/menu-images/menu_items/fd5878aa-90dc-4cd8-a20e-ada96648a2d1/1781564803170_original.png
+GET https://vgpkxuwcvpkdqgpxnhlu.supabase.co/storage/v1/object/public/menu-images/menu_items/24906484-851f-4047-b490-5e6783f38150/1781109396935.jpg
