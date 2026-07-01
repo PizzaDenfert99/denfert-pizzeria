@@ -1,0 +1,81 @@
+{
+  "summary": "CORS fix VERIFIED end-to-end via real Chromium/Playwright against production URLs. Duplicated Access-Control-Allow-Origin headers are gone. TEST 2 (reservation customer→admin) PASSES fully end-to-end via UI. TEST 1 (menu CMS→customer) BLOCKED at the CMS UI layer by two pre-existing (non-CORS) UI/backend defects: (a) admin.pizzadenfert.fr/admin panel body renders EMPTY (no open-cms-btn / open-stats-btn / open-reservations-btn visible) even though login succeeds and JWT is stored — those buttons are in the JS bundle but never mount, and (b) admin.pizzadenfert.fr/admin-cms uses Supabase Auth which rejects admin@pizzadenfert.fr/Admin1234! (400 Invalid login credentials). CORS is no longer the blocker; a CMS UI/routing/auth bug is.",
+  "final_verdict": "STILL BROKEN: CORS is fixed and reservation flow works end-to-end, but the CMS/admin dashboard UI on admin.pizzadenfert.fr/admin renders an empty body (no management shortcuts visible) and /admin-cms uses a separate Supabase-Auth stack whose credentials are unknown — so a menu item cannot be created via any admin UI. TEST 1 cannot complete via UI until either the /admin dashboard body is fixed to actually render its buttons, or Supabase credentials for /admin-cms are provided.",
+  "cors_verification": {
+    "curl_get_menu": "HTTP/2 200; exactly ONE 'access-control-allow-origin: *'; ONE 'access-control-allow-credentials: true'",
+    "curl_options_preflight_reservations_guest": "HTTP/2 200; ONE 'access-control-allow-origin: https://pizzadenfert.fr'; allow-methods and allow-headers present; no duplicates",
+    "browser_verified": "Real Chromium sessions on https://pizzadenfert.fr and https://admin.pizzadenfert.fr issued fetches: POST /api/auth/login 200, POST /api/reservations/guest 200, GET /api/admin/reservations 200, GET /api/admin/settings/capacity 200, GET /api/menu 200, GET /api/loyalty/me 200, GET /api/reservations/me 200, GET /api/auth/me 200. Zero CORS console errors, zero failed requests."
+  },
+  "test1_menu_edit_cms_to_customer": {
+    "status": "BLOCKED (not by CORS)",
+    "root_cause": "Admin CMS UI itself is broken/misrouted. (1) admin.pizzadenfert.fr/admin logs in successfully (POST /api/auth/login 200, @auth_token stored in localStorage) but the AdminScreen ScrollView contentContainer renders as an EMPTY <div style='padding:16px 16px 60px'></div>. The bundle DOES contain testIDs open-cms-btn, open-reservations-btn, open-stats-btn, open-settings-btn, open-staff-btn, open-kiosk-btn, open-ads-btn, open-loyalty-app-btn — all gated by !isLoyaltyApp() which is FALSE-negated (i.e. should evaluate true) on admin.pizzadenfert.fr, but none render. Suggests either (a) an early return in AdminScreen when the fetched user role isn't 'admin'/'owner' (however /api/auth/me returns 200 fine), or (b) an unconditional error higher in the tree that swallows the whole body. (2) /admin-reservations however works fine when navigated directly (see TEST 2). (3) /admin-cms is a totally separate Supabase-Auth screen; POST to https://vgpkxuwcvpkdqgpxnhlu.supabase.co/auth/v1/token returns 400 'Invalid login credentials' with the FastAPI admin creds — this admin CMS is thus inaccessible.",
+    "steps": {
+      "1a_open_admin": "PASS — /account -> click staff-access-btn opens FastAPI admin login form.",
+      "1b_login": "PASS — POST /api/auth/login 200, redirected to /admin, @auth_token JWT in localStorage.",
+      "1c_navigate_to_menu_cms": "FAIL — /admin dashboard body is empty; no open-cms-btn visible. Direct navigation to /admin-cms shows Supabase login (different auth stack; rejects Admin1234!).",
+      "1d_add_menu_item": "BLOCKED — cannot reach menu-management CMS UI.",
+      "1e_success_toast": "N/A",
+      "1f_network_url": "N/A",
+      "1g_open_customer_app": "PASS — https://pizzadenfert.fr loaded, menu tab renders live items (200 GET /api/menu).",
+      "1h_new_item_visible": "N/A",
+      "1i_cleanup": "N/A"
+    }
+  },
+  "test2_reservation_customer_to_admin": {
+    "status": "PASS",
+    "marker_used": "E2E_UI_RES_1782916859",
+    "steps": {
+      "2a_open_customer_reserve": "PASS — https://pizzadenfert.fr/reserve loaded reserve-screen.",
+      "2b_fill_form": "PASS — zone-indoor, time-20:00, guests=2 (default), name=E2E_UI_RES_1782916859, phone=+33600000199, date=2026-07-01 (today; iter15's +14d was 2026-07-15 which is beyond the available 14-day slot window — used the default 'Mer 1' which is today+0 in this test env).",
+      "2c_submit": "PASS — reserve-submit-btn clicked; UI shows big green check + 'Réservation confirmée · À très vite chez Pizza Denfert. · 2026-07-01 · 20:00 · 2 convives · Intérieur · Table I-1'. No error text anywhere.",
+      "2d_network": "PASS — POST https://api.pizzadenfert.fr/api/reservations/guest returned 200. GET /api/reservations/availability?date=2026-07-01&time=20%3A00 also 200. Zero CORS/failed-fetch console errors.",
+      "2e_login_admin": "PASS — /account -> staff-access-btn -> admin-login-btn with admin@pizzadenfert.fr/Admin1234! → /admin (@auth_token stored, POST /api/auth/login 200).",
+      "2f_navigate_admin_reservations": "PASS — direct-navigated to https://admin.pizzadenfert.fr/admin-reservations. Screen loads with filter chips (PÉRIODE Aujourd'hui/À venir/Passées/Toutes/Plage · STATUT Tous/Confirmée/Liste d'attente/Terminée/Annulée). GET /api/admin/reservations?limit=500&period=upcoming returned 200.",
+      "2g_verify_reservation_visible": "PASS — card 'E2E_UI_RES_1782916859 · mer. 01 juil. · 20:00 · 2 couverts · Confirmée · Intérieur · Table I-1 · +33600000199 · [Terminer] [Annuler]' rendered in the list. Screenshot: /app/test_reports/screenshots_iter16/14_admin_reservations.png",
+      "2h_cleanup": "PASS — clicked Annuler on the E2E card. Card immediately re-rendered as 'Annulée · Intérieur · Sans table'. Screenshot: /app/test_reports/screenshots_iter16/15_after_cancel_attempt.png"
+    }
+  },
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AdminScreen (admin.pizzadenfert.fr/admin, data-testid='admin-panel')", "issue": "After successful FastAPI login (auth token stored), the ScrollView body is EMPTY — 0 children in the padded content container. Expected testIDs from the JS bundle (open-cms-btn, open-reservations-btn, open-stats-btn, open-settings-btn, open-staff-btn, open-kiosk-btn, open-ads-btn, open-loyalty-app-btn) never mount. Likely an early return in the AdminScreen render tree gated on a user-role or feature-flag that is falsy for admin@pizzadenfert.fr. Bypass: user MUST know the exact route (e.g. /admin-reservations) and type it in the URL bar. This is a critical CMS regression — the entire admin quick-actions grid is unreachable via UI.", "testID": "admin-panel", "priority": "HIGH"},
+      {"component": "/admin-cms (Supabase-Auth CMS)", "issue": "Same as iteration_15: this CMS uses a separate Supabase auth stack (POST https://vgpkxuwcvpkdqgpxnhlu.supabase.co/auth/v1/token 400 'Invalid login credentials' with admin@pizzadenfert.fr/Admin1234!). Menu-management CMS (new-item, new-cat, item-save testIDs exist in the bundle) is therefore inaccessible to the documented admin credentials.", "testID": "cms-submit", "priority": "HIGH"}
+    ],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots_iter16/01_admin_account.png",
+    "/app/test_reports/screenshots_iter16/02_admin_login_form.png",
+    "/app/test_reports/screenshots_iter16/03_admin_login_filled.png",
+    "/app/test_reports/screenshots_iter16/04_admin_after_login.png (empty admin panel body)",
+    "/app/test_reports/screenshots_iter16/08_admin_cms_login.png (Supabase CMS login)",
+    "/app/test_reports/screenshots_iter16/09_cms_filled.png",
+    "/app/test_reports/screenshots_iter16/10_cms_after_login.png (Supabase 'Invalid login credentials')",
+    "/app/test_reports/screenshots_iter16/11_reserve_form.png",
+    "/app/test_reports/screenshots_iter16/12_reserve_filled.png",
+    "/app/test_reports/screenshots_iter16/13_reserve_after_submit.png (Réservation confirmée)",
+    "/app/test_reports/screenshots_iter16/14_admin_reservations.png (E2E_UI_RES visible, status Confirmée)",
+    "/app/test_reports/screenshots_iter16/15_after_cancel_attempt.png (cleanup: Annulée)"
+  ],
+  "action_items": [
+    "HIGH: Fix AdminScreen (/admin) empty-body bug. After a successful FastAPI login (auth token in localStorage, /api/auth/me returns 200), the admin-panel ScrollView body renders zero children. Investigate the top-level guard in AdminScreen — likely a role/permission check comparing against a shape that isn't returned by /api/auth/me (e.g. expecting `role === 'owner'` while the API returns `role: 'admin'`), or a Boolean(...) on an async-not-yet-resolved value that stays false. Expected buttons: open-reservations-btn, open-cms-btn, open-stats-btn, open-settings-btn, open-staff-btn, open-kiosk-btn, open-ads-btn, open-loyalty-app-btn.",
+    "HIGH: Reconcile the two admin auth stacks. /admin uses FastAPI + JWT (works). /admin-cms uses Supabase Auth (rejects the documented creds). Either: (a) provision admin@pizzadenfert.fr / Admin1234! in Supabase, (b) migrate /admin-cms to FastAPI auth like /admin, or (c) document the working Supabase credentials in /app/memory/test_credentials.md. Right now menu-editing CMS is unreachable via the documented admin account.",
+    "MEDIUM: The /reserve customer form only exposes 14 dates (today .. today+13). iteration_15 review requested today+14 days which is off the end of the list. Either widen the date window or update the test-review spec to use today+13.",
+    "LOW: iteration_15 leftover reservation E2E_UI_RES_1782915992 (phone +33600000199, date 2026-07-14 20:00) may still exist in Mongo — main-agent stated it was cleaned but confirm. Note: the review request said leftovers were cleaned, and my /admin-reservations list showed only 2 other pre-existing reservations (SyncTest Customer, VerifyTest Customer, both Annulée), plus mine which I cancelled — so the DB looks clean for E2E_UI_RES_1782915992.",
+    "NONE for CORS: fix is confirmed working end-to-end. No further action needed on the nginx/CORS layer."
+  ],
+  "critical_code_review_comments": [
+    "CORS fix is textbook-correct: nginx no longer double-adds ACAO; FastAPI's CORSMiddleware is the single source of truth. Preflight (OPTIONS) still echoes the request origin properly. Real browsers now accept every response.",
+    "The empty /admin dashboard is a rendering-guard bug — worth adding a testID='admin-panel-body' and a defensive fallback ('No admin actions available for your role') so future breakage is diagnosable rather than silent.",
+    "Having two admin stacks (/admin FastAPI + /admin-cms Supabase) on the same subdomain with disjoint credentials is a governance smell. Pick one."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (all /api/* endpoints reachable and returning 2xx from real browsers, no CORS)", "frontend": "50% (Test 2 passes end-to-end via UI; Test 1 blocked by admin CMS UI/auth bugs unrelated to CORS)"},
+  "seed_data_creation": "Created reservation E2E_UI_RES_1782916859 (phone +33600000199, 2026-07-01 20:00, indoor, Table I-1). Cleaned up via admin UI Annuler button — now status Annulée. Safe to leave; no manual cleanup needed.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "CORS is fixed — do NOT re-test that. Focus on TEST 1 once main agent fixes the /admin dashboard body-rendering bug OR resolves the Supabase-Auth /admin-cms credentials mismatch. Key routes: FastAPI admin login = admin.pizzadenfert.fr/account -> staff-access-btn -> admin-email-input/admin-password-input/admin-login-btn. Admin reservations = /admin-reservations (works via direct URL). Menu CMS testIDs available in bundle: new-item, new-cat, item-save, item-cancel, cms-dashboard.",
+  "rca_of_issue": "PREVIOUS BUG (iteration_15): duplicated ACAO headers from FastAPI CORSMiddleware + nginx add_header. STATUS: RESOLVED — nginx add_header Access-Control-* removed from api-pizzadenfert vhost, FastAPI CORSMiddleware retained as single source of truth. Verified via curl (exactly 1 ACAO per response) AND via real Chromium browsers (POST /api/auth/login, POST /api/reservations/guest, GET /api/admin/reservations all succeed with no CORS console errors). NEW BUG (iteration_16): admin.pizzadenfert.fr/admin dashboard body renders empty despite successful auth; reproduce by logging in with admin@pizzadenfert.fr/Admin1234! at /account -> staff-access-btn -> admin-login-btn and observing that the ScrollView contentContainer child count is 0. Mitigation: investigate the render-tree guards inside AdminScreen (likely a role/permission mismatch between /api/auth/me response shape and the client's expected shape). Meanwhile, /admin-reservations is directly navigable and works."
+}
