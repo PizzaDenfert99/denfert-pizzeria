@@ -1,0 +1,39 @@
+{
+  "summary": "MIGRATION VERIFIED END-TO-END - CMS writes reach the customer app. Real Playwright/Chromium against production HTTPS URLs (admin.pizzadenfert.fr + pizzadenfert.fr). TEST 1 (CMS write -> customer read): logged into CMS as admin@pizzadenfert.fr, edited pizza 'Margherita test' to 'E2E_MIGRATION_OK_1782953526', PATCH went to https://fuxyinngmdzzoumloenv.supabase.co/rest/v1/menu_items?id=eq.4c209fad-... returning 204 (frontend uses Prefer:return=minimal, so 204 with empty body = success; write confirmed by dashboard refresh + customer app render). Opened https://pizzadenfert.fr in a fresh context, tapped Menu tab, and the customer 'La Carte' screen shows E2E_MIGRATION_OK_1782953526 as the first Pizzas item (screenshot 10). Reverted the name back to 'Margherita test' via the same UI flow - PATCH again went to new project (204); customer app immediately reflects the revert (screenshot 13). ZERO requests to the old project vgpkxuwcvpkdqgpxnhlu.supabase.co observed in either admin or customer context; ALL Supabase traffic hits fuxyinngmdzzoumloenv.supabase.co. TEST 2 (reservation flow regression): submitted a reservation from https://pizzadenfert.fr/reserve as MIG_TEST_RES_1782953726, phone +33600000199, 3 convives, Intérieur, 20:00. POST /api/reservations/guest returned 200 and the confirmation screen 'Réservation confirmée' appeared. Logged into admin (email/password flow at admin.pizzadenfert.fr/admin) and navigated to /admin-reservations - the reservation is visible with status 'Confirmée'. Clicked cancel-b371ede2-3e0c-4c07-b068-ffb73c4a23ce and status flipped to 'Annulée' (screenshot 39). FINAL VERDICT: MIGRATION VERIFIED END-TO-END - CMS writes reach the customer app.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": [
+      {"component": "reserve screen", "issue": "Two 'Minified React error #418' page errors thrown on load of /reserve (hydration mismatch). Non-blocking - form still works and submits successfully. Reference: https://react.dev/errors/418"}
+    ]
+  },
+  "test_report_links": [
+    "/app/test_reports/screenshots_iter19/02_after_login.png",
+    "/app/test_reports/screenshots_iter19/03_edit_open.png",
+    "/app/test_reports/screenshots_iter19/04_after_save.png",
+    "/app/test_reports/screenshots_iter19/10_customer_menu.jpg",
+    "/app/test_reports/screenshots_iter19/12_after_revert.jpg",
+    "/app/test_reports/screenshots_iter19/13_customer_after_revert.jpg",
+    "/app/test_reports/screenshots_iter19/21_reserve_filled.jpg",
+    "/app/test_reports/screenshots_iter19/22_reserve_after.jpg",
+    "/app/test_reports/screenshots_iter19/37_admin_reservations_page.jpg",
+    "/app/test_reports/screenshots_iter19/39_admin_after_cancel.jpg"
+  ],
+  "action_items": [
+    "Optional: investigate React error #418 (hydration mismatch) on /reserve screen. Non-blocking but should be cleaned up.",
+    "No fix required for migration - it is complete and working."
+  ],
+  "critical_code_review_comments": [
+    "PATCH to menu_items returns 204 not 200 because the CMS frontend uses Prefer: return=minimal. This is functionally identical to a successful write; the earlier RLS bug returned 200 with body '[]' (silent block). Current behavior (204) plus subsequent GET showing new value is definitive proof of success.",
+    "Deployed bundle entry-2feab64fe60e9c38cfa93bc6fd73ed05.js correctly points at the new project. No trace of vgpkxuwcvpkdqgpxnhlu in any request across both admin and customer contexts."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "seed_data_creation": "Created reservation MIG_TEST_RES_1782953726 (2026-07-02 20:00 Table I-1) and cancelled it via admin UI. Menu item Margherita test was temporarily renamed and reverted to original state - no permanent data changes.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Supabase migration is fully complete. New project fuxyinngmdzzoumloenv.supabase.co is live; RLS policies allow public read and admin (row in public.admins) write. Admin CMS creds: admin@pizzadenfert.fr / Admin1234!. Bundle at /var/www/admin-pizzadenfert/_expo/static/js/web/entry-2feab64fe60e9c38cfa93bc6fd73ed05.js is the currently-patched build. Any future write test can just edit an item in CMS and verify it appears in customer /Menu tab. Old project vgpkxuwcvpkdqgpxnhlu is no longer referenced by any deployed asset.",
+  "rca_of_issue": "Original bug: authenticated PATCH from CMS returned 200 with body '[]' because RLS write policies on the previous Supabase project did not match the auth.uid() -> admins.user_id lookup. New project has policy `admins_can_write: EXISTS (SELECT 1 FROM admins WHERE user_id = auth.uid())` which passes when the logged-in user 37f06ebf-3a4d-4dd7-8509-1f5168e8ddb6 is present in admins. Verified live: PATCH now returns 204 (minimal) and the underlying row is updated, as proven by both dashboard reload and independent customer-app render."
+}
