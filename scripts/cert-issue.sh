@@ -1,16 +1,20 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# Pizza Denfert — obtain a real Let's Encrypt cert without stopping Nginx.
+# Pizza Denfert — obtain real Let's Encrypt certs without stopping Nginx.
 #
-# Uses the HTTP-01 webroot method: certbot writes a challenge file to
-# /var/www/certbot inside a shared Docker volume, the already-running Nginx
-# serves it under /.well-known/acme-challenge/, Let's Encrypt validates, and
-# certbot writes the cert into the certbot_data volume. This script then
-# copies the cert into nginx/certs/<host>/ (bind-mounted into Nginx) and
-# reloads Nginx — all with zero downtime.
+# Issues TWO separate SAN certs via the HTTP-01 webroot method:
 #
-# One SAN certificate covers both hostnames (Let's Encrypt allows up to 100
-# per cert). Certbot names the lineage after the FIRST -d flag.
+#   Lineage A (customer web)  : pizzadenfert.fr + www.pizzadenfert.fr
+#   Lineage B (backend hosts) : api.pizzadenfert.fr + loyalty.pizzadenfert.fr
+#
+# Certbot writes challenge files to /var/www/certbot inside a shared Docker
+# volume; the already-running Nginx serves them under /.well-known/acme-
+# challenge/; Let's Encrypt validates; certbot writes the certs into the
+# certbot_data volume; and this script copies each SAN cert into all of the
+# hostname directories under nginx/certs/, then reloads Nginx. Zero downtime.
+#
+# Idempotent: certbot's --keep-until-expiring flag means re-running the
+# script within the cert validity window is a no-op.
 #
 # Usage:
 #   sudo bash scripts/cert-issue.sh you@your.email
@@ -28,8 +32,13 @@ EMAIL="${1:-${EMAIL:-}}"
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_DIR"
 
-PRIMARY="api.pizzadenfert.fr"
-HOSTS="$PRIMARY loyalty.pizzadenfert.fr"
+# Each spec is "primary-cert-name domain1 domain2 ..."
+# The primary name is what certbot uses for the lineage directory under
+# /etc/letsencrypt/live/<name>/. We use it to look up + copy the cert files.
+CERT_SPECS=(
+  "pizzadenfert.fr pizzadenfert.fr www.pizzadenfert.fr"
+  "api.pizzadenfert.fr api.pizzadenfert.fr loyalty.pizzadenfert.fr"
+)
 
 echo "==> Ensuring Nginx is running (needed for HTTP-01 challenge)"
 if ! docker compose ps --status running 2>/dev/null | grep -q pizzadenfert-nginx; then
@@ -37,28 +46,32 @@ if ! docker compose ps --status running 2>/dev/null | grep -q pizzadenfert-nginx
   sleep 3
 fi
 
-echo "==> Requesting Let's Encrypt cert for: $HOSTS"
-CERTBOT_ARGS="certonly --webroot -w /var/www/certbot --agree-tos --no-eff-email --non-interactive -m $EMAIL --cert-name $PRIMARY"
-for h in $HOSTS; do CERTBOT_ARGS="$CERTBOT_ARGS -d $h"; done
-docker compose --profile cert run --rm --entrypoint certbot certbot $CERTBOT_ARGS
+for spec in "${CERT_SPECS[@]}"; do
+  set -- $spec
+  primary="$1"; shift
+  hosts="$@"
 
-echo "==> Copying the issued cert into nginx/certs/<host>/ for each server block"
-for host in $HOSTS; do
-  mkdir -p "nginx/certs/$host"
-done
-# Copy the SAME lineage (one SAN cert) into both host directories.
-docker compose --profile cert run --rm --entrypoint sh certbot -c "
+  echo "==> Requesting cert '$primary' for domains: $hosts"
+  ARGS="certonly --webroot -w /var/www/certbot --agree-tos --no-eff-email --non-interactive --keep-until-expiring -m $EMAIL --cert-name $primary"
+  for h in $hosts; do ARGS="$ARGS -d $h"; done
+  docker compose --profile cert run --rm --entrypoint certbot certbot $ARGS
+
+  echo "==> Copying '$primary' into nginx/certs/<host>/ for each server block"
+  for host in $hosts; do mkdir -p "nginx/certs/$host"; done
+  docker compose --profile cert run --rm --entrypoint sh certbot -c "
 set -eu
-for host in $HOSTS; do
-  cp -L /etc/letsencrypt/live/$PRIMARY/fullchain.pem /etc/letsencrypt/live-out/\$host/fullchain.pem
-  cp -L /etc/letsencrypt/live/$PRIMARY/privkey.pem   /etc/letsencrypt/live-out/\$host/privkey.pem
+for host in $hosts; do
+  cp -L /etc/letsencrypt/live/$primary/fullchain.pem /etc/letsencrypt/live-out/\$host/fullchain.pem
+  cp -L /etc/letsencrypt/live/$primary/privkey.pem   /etc/letsencrypt/live-out/\$host/privkey.pem
   chmod 644 /etc/letsencrypt/live-out/\$host/fullchain.pem
   chmod 600 /etc/letsencrypt/live-out/\$host/privkey.pem
 done
 "
+done
 
 echo "==> Reloading Nginx (zero downtime)"
 docker compose exec -T nginx nginx -s reload
 
 echo "==> Done. Verify with:"
-echo "    curl -fsS https://$PRIMARY/api/healthz"
+echo "    curl -fsS https://pizzadenfert.fr"
+echo "    curl -fsS https://api.pizzadenfert.fr/api/healthz"

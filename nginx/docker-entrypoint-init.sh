@@ -14,7 +14,7 @@
 # ---------------------------------------------------------------------------
 set -eu
 
-HOSTS="${NGINX_CERT_HOSTS:-api.pizzadenfert.fr loyalty.pizzadenfert.fr}"
+HOSTS="${NGINX_CERT_HOSTS:-pizzadenfert.fr www.pizzadenfert.fr api.pizzadenfert.fr loyalty.pizzadenfert.fr}"
 
 for host in $HOSTS; do
   dir="/etc/nginx/certs/$host"
@@ -30,7 +30,7 @@ for host in $HOSTS; do
       -subj   "/CN=$host" >/dev/null 2>&1
     chmod 644 "$fullchain"
     chmod 600 "$privkey"
-    echo "[nginx-init] Placeholder written to $dir. REPLACE with a real cert (see DEPLOY.md)."
+    echo "[nginx-init] Placeholder written to $dir. REPLACE with a real cert (make cert-issue)."
   else
     echo "[nginx-init] $host — certs present."
   fi

@@ -1,0 +1,48 @@
+# Files excluded from the Docker build context sent to the daemon.
+# Keeps the image small AND speeds up `docker compose build` dramatically
+# on a fresh VPS — without this, node_modules alone can be >1 GiB.
+
+# --- Root-level ---
+.git
+.github
+.venv
+**/__pycache__
+**/*.pyc
+
+# --- Never ship secrets or local env ---
+.env
+!.env.docker.example
+
+# --- Backups + volumes never belong in an image ---
+backups
+backups/
+nginx/certs
+
+# --- Sandbox / development artefacts ---
+.deploy
+.emergent
+.metro-cache
+memory
+test_reports
+test_result.md
+tests
+docs
+
+# --- Frontend build artefacts (we build them inside the container) ---
+frontend/node_modules
+frontend/.expo
+frontend/.expo-shared
+frontend/.metro-cache
+frontend/dist
+frontend/web-build
+frontend/ios
+frontend/android
+frontend/.env
+
+# --- Editor / OS junk ---
+.DS_Store
+.idea
+.vscode
+*.swp
+
+# --- Backend excludes are also declared in backend/.dockerignore ---

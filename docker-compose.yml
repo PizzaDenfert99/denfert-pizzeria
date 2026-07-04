@@ -77,8 +77,11 @@ services:
 
   nginx:
     build:
-      context: ./nginx
-      dockerfile: Dockerfile
+      # Build context is the repo ROOT so the multi-stage Dockerfile can
+      # COPY frontend/ (Expo customer app) in the builder stage AND the
+      # nginx/docker-entrypoint-init.sh in the runtime stage.
+      context: .
+      dockerfile: nginx/Dockerfile
     image: pizzadenfert/nginx:latest
     container_name: pizzadenfert-nginx
     restart: unless-stopped
@@ -86,7 +89,8 @@ services:
       - backend
     environment:
       # Consumed by nginx/docker-entrypoint-init.sh for placeholder-cert gen.
-      NGINX_CERT_HOSTS: "api.pizzadenfert.fr loyalty.pizzadenfert.fr"
+      # Order matches the server_name blocks in nginx.conf.
+      NGINX_CERT_HOSTS: "pizzadenfert.fr www.pizzadenfert.fr api.pizzadenfert.fr loyalty.pizzadenfert.fr"
     ports:
       - "80:80"
       - "443:443"
