@@ -1,6 +1,7 @@
-import React, { useEffect, useMemo, useState, useCallback } from "react";
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, FlatList, Pressable, RefreshControl } from "react-native";
+import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
+import { View, Text, StyleSheet, ScrollView, ActivityIndicator, FlatList, Pressable, RefreshControl, AppState } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { useFocusEffect } from "expo-router";
 import { Image } from "expo-image";
 import { useI18n } from "@/src/i18n";
 import { api } from "@/src/api";
@@ -38,9 +39,13 @@ export default function MenuScreen() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [source, setSource] = useState<"supabase" | "fastapi" | "loading">("loading");
+  // Tracks the FastAPI menu revision (bumped by the loyalty backend on every
+  // CMS write). Used only when we fall back to the FastAPI source to cheaply
+  // detect CMS updates without a full refetch.
+  const revRef = useRef<number | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (spinner: boolean = true) => {
+    if (spinner) setLoading(true);
     // --- 1. Try Supabase first (if env vars are set) ---
     if (isSupabaseConfigured()) {
       try {
@@ -70,10 +75,9 @@ export default function MenuScreen() {
             setCat((prev) => (list.some((r) => r.category_slug === prev) ? prev : (firstWithItems?.slug ?? catList[0].slug)));
           }
           setSource("supabase");
-          setLoading(false);
+          if (spinner) setLoading(false);
           return;
         }
-        // Supabase reachable but tables empty → fall through to legacy as soft fallback.
         console.warn("Supabase reachable but no menu rows — falling back to FastAPI seed.");
       } catch (e) {
         console.warn("Supabase fetch failed, falling back to FastAPI:", e);
@@ -95,15 +99,56 @@ export default function MenuScreen() {
       setCats(LEGACY_FALLBACK_CATS);
       setRows(list);
       setSource("fastapi");
+      // Record the current revision so refreshIfChanged() can skip no-op refetches.
+      try {
+        const v: any = await (api as any).menuVersion?.();
+        if (v) revRef.current = v.rev ?? null;
+      } catch {
+        // Older backend without /menu/version — pull-to-refresh still works.
+      }
     } catch (e) {
       console.error("Both Supabase and FastAPI failed", e);
       setRows([]);
     } finally {
-      setLoading(false);
+      if (spinner) setLoading(false);
     }
   }, [lang]);
 
-  useEffect(() => { load(); }, [load]);
+  // Lightweight sync probe — refetch the menu only when the CMS revision
+  // changed (FastAPI source) or unconditionally poll Supabase (cheap query).
+  const refreshIfChanged = useCallback(async () => {
+    if (source === "supabase") {
+      // Supabase reads are cheap; just re-run silently.
+      await load(false);
+      return;
+    }
+    try {
+      const v: any = await (api as any).menuVersion?.();
+      if (v && v.rev !== revRef.current) await load(false);
+    } catch {
+      // ignore — keep whatever we have on screen
+    }
+  }, [source, load]);
+
+  // Initial load when the screen first mounts.
+  useEffect(() => { load(true); }, [load]);
+
+  // On focus (user navigates back to the tab) — refresh silently.
+  useFocusEffect(useCallback(() => { refreshIfChanged(); }, [refreshIfChanged]));
+
+  // While the tab is focused, poll every 20 s. Cleared on blur.
+  useFocusEffect(useCallback(() => {
+    const id = setInterval(refreshIfChanged, 20000);
+    return () => clearInterval(id);
+  }, [refreshIfChanged]));
+
+  // When the app returns to foreground (mobile lock-screen ↑), check again.
+  useEffect(() => {
+    const sub = AppState.addEventListener("change", (st) => {
+      if (st === "active") refreshIfChanged();
+    });
+    return () => sub.remove();
+  }, [refreshIfChanged]);
 
   const filtered = useMemo(() => rows.filter((r) => r.category_slug === cat), [rows, cat]);
 
@@ -147,7 +192,7 @@ export default function MenuScreen() {
           data={filtered}
           keyExtractor={(i) => i.id}
           contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 140, paddingTop: theme.space.md }}
-          refreshControl={<RefreshControl refreshing={refreshing} tintColor={theme.color.brand} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}
+          refreshControl={<RefreshControl refreshing={refreshing} tintColor={theme.color.brand} onRefresh={async () => { setRefreshing(true); await load(false); setRefreshing(false); }} />}
           renderItem={({ item }) => {
             const sizeKeys = item.prices ? Object.keys(item.prices).filter((k) => k !== "default") : [];
             const showSizes = sizeKeys.length >= 2;

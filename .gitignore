@@ -80,16 +80,18 @@ memory/test_credentials.md
 
 # Mobile development
 android-sdk/
-# NOTE: .env files are intentionally tracked in this repo so the
+# .env files: the customer app's frontend/.env is intentionally tracked so the
 # Emergent deploy pipeline can pick up MONGO_URL / DB_NAME / EXPO_PUBLIC_*
-# variables baked at build time. Do NOT re-add the broad .env exclusions.
+# variables baked at build time. All OTHER .env files stay ignored.
+.env
+.env.*
+*.env
+!frontend/.env
+!frontend/.env.example
+!backend/.env.example
 # Per-build secrets that must NEVER be committed:
 google-services.json
 play-store-service-account.json
 credentials.json
 *.key
 .credentials
-.deploy/
-.env
-.env.*
-*.env

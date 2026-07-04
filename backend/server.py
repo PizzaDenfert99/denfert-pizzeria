@@ -30,6 +30,81 @@ JWT_SECRET = os.environ["JWT_SECRET"]
 SUPABASE_URL = (os.environ.get("SUPABASE_URL") or "").rstrip("/")
 SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or ""
 
+# ---- SMS / OTP provider configuration ----------------------------------------
+# DEMO MODE (default): SMS_PROVIDER empty/none → the OTP code is returned in the
+# API response (`dev_code`) and logged, so the flow is fully testable without a
+# real SMS gateway. To activate real SMS LATER without any code change or APK
+# rebuild, simply set SMS_PROVIDER ("twilio" | "ovh") and the matching creds in
+# the backend .env, then restart the backend.
+SMS_PROVIDER = (os.environ.get("SMS_PROVIDER") or "").strip().lower()
+OTP_DEMO_MODE = (os.environ.get("OTP_DEMO_MODE", "true").strip().lower() in ("1", "true", "yes"))
+
+
+def _sms_is_live() -> bool:
+    """True when a real SMS provider is fully configured."""
+    if SMS_PROVIDER == "twilio":
+        return bool(os.environ.get("TWILIO_ACCOUNT_SID") and os.environ.get("TWILIO_AUTH_TOKEN")
+                    and os.environ.get("TWILIO_FROM_NUMBER"))
+    if SMS_PROVIDER == "ovh":
+        return bool(os.environ.get("OVH_APP_KEY") and os.environ.get("OVH_APP_SECRET")
+                    and os.environ.get("OVH_CONSUMER_KEY") and os.environ.get("OVH_SMS_SERVICE"))
+    return False
+
+
+async def _send_sms_otp(phone: str, code: str) -> bool:
+    """Send the OTP via the configured provider. Returns True if a real SMS was sent.
+
+    In demo mode (no provider configured) this is a no-op returning False — the
+    caller then exposes the code via `dev_code`. The Twilio / OVH branches are
+    fully wired and only need credentials to go live.
+    """
+    if not _sms_is_live():
+        return False
+    body = f"Pizza Denfert — votre code de connexion: {code}"
+    try:
+        if SMS_PROVIDER == "twilio":
+            sid = os.environ["TWILIO_ACCOUNT_SID"]
+            token = os.environ["TWILIO_AUTH_TOKEN"]
+            sender = os.environ["TWILIO_FROM_NUMBER"]
+            async with httpx.AsyncClient(timeout=15) as cx:
+                r = await cx.post(
+                    f"https://api.twilio.com/2010-04-01/Accounts/{sid}/Messages.json",
+                    data={"From": sender, "To": phone, "Body": body},
+                    auth=(sid, token),
+                )
+                r.raise_for_status()
+            return True
+        if SMS_PROVIDER == "ovh":
+            # OVH SMS REST API (signed request).
+            import hashlib, time as _time
+            app_key = os.environ["OVH_APP_KEY"]
+            app_secret = os.environ["OVH_APP_SECRET"]
+            consumer_key = os.environ["OVH_CONSUMER_KEY"]
+            service = os.environ["OVH_SMS_SERVICE"]
+            sender = os.environ.get("OVH_SMS_SENDER") or "PizzaDenfert"
+            endpoint = "https://eu.api.ovh.com/1.0"
+            url = f"{endpoint}/sms/{service}/jobs"
+            payload = _json.dumps({
+                "message": body, "senderForResponse": False, "sender": sender,
+                "receivers": [phone],
+            })
+            ts = str(int(_time.time()))
+            to_sign = f"{app_secret}+{consumer_key}+POST+{url}+{payload}+{ts}"
+            sig = "$1$" + hashlib.sha1(to_sign.encode()).hexdigest()
+            headers = {
+                "X-Ovh-Application": app_key, "X-Ovh-Consumer": consumer_key,
+                "X-Ovh-Timestamp": ts, "X-Ovh-Signature": sig,
+                "Content-Type": "application/json",
+            }
+            async with httpx.AsyncClient(timeout=15) as cx:
+                r = await cx.post(url, content=payload, headers=headers)
+                r.raise_for_status()
+            return True
+    except Exception as e:
+        log.warning(f"SMS send failed via {SMS_PROVIDER}: {e}")
+        return False
+    return False
+
 app = FastAPI(title="Pizza Denfert API")
 api = APIRouter(prefix="/api")
 logging.basicConfig(level=logging.INFO)
@@ -286,8 +361,13 @@ async def otp_request(b: OtpRequestIn):
         upsert=True,
     )
     log.info(f"OTP for {phone}: {code}")
-    # In production with Twilio, send SMS here. For now, return code in dev_code field.
-    return {"ok": True, "phone": phone, "dev_code": code, "expires_in": 600}
+    # Try to send a real SMS if a provider is configured; otherwise demo mode.
+    sent = await _send_sms_otp(phone, code)
+    resp = {"ok": True, "phone": phone, "expires_in": 600, "demo_mode": not sent}
+    if not sent:
+        # DEMO MODE: expose the code so the flow works without an SMS gateway.
+        resp["dev_code"] = code
+    return resp
 
 
 @api.post("/auth/otp/verify")
@@ -381,6 +461,134 @@ async def logout(authorization: Optional[str] = Header(None)):
 @api.get("/menu")
 async def menu():
     return await db.menu.find({}, {"_id": 0}).to_list(500)
+
+
+async def _bump_menu_rev() -> int:
+    """Increment the menu revision so clients can cheaply detect CMS changes."""
+    doc = await db.meta.find_one_and_update(
+        {"_id": "menu"},
+        {"$inc": {"rev": 1}, "$set": {"updated_at": now().isoformat()}},
+        upsert=True, return_document=True,
+    )
+    return int((doc or {}).get("rev", 1))
+
+
+@api.get("/menu/version")
+async def menu_version():
+    """Tiny endpoint the customer apps poll to know when to refetch the menu.
+    Returns a monotonically increasing `rev` (bumped on every CMS menu write)
+    plus the live item count, so a changed value = the menu changed."""
+    meta = await db.meta.find_one({"_id": "menu"}, {"_id": 0})
+    count = await db.menu.count_documents({})
+    return {"rev": int((meta or {}).get("rev", 0)), "count": count,
+            "updated_at": (meta or {}).get("updated_at")}
+
+
+# ---- Admin menu management (MongoDB-backed CMS) ----
+MENU_CATEGORIES = ("pizzas", "focaccias", "gratins", "salades", "desserts", "boissons", "vins")
+
+
+class MenuItemIn(BaseModel):
+    category: str
+    name: str
+    desc_fr: Optional[str] = ""
+    desc_en: Optional[str] = ""
+    ingredients_fr: Optional[str] = ""
+    ingredients_en: Optional[str] = ""
+    price: Optional[float] = None
+    prices: Optional[dict] = None  # e.g. {"26": 10.9, "31": 13.9} for pizzas
+    image: Optional[str] = ""
+
+
+class MenuItemUpdate(BaseModel):
+    category: Optional[str] = None
+    name: Optional[str] = None
+    desc_fr: Optional[str] = None
+    desc_en: Optional[str] = None
+    ingredients_fr: Optional[str] = None
+    ingredients_en: Optional[str] = None
+    price: Optional[float] = None
+    prices: Optional[dict] = None
+    image: Optional[str] = None
+
+
+@api.get("/admin/menu")
+async def admin_list_menu(authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    return await db.menu.find({}, {"_id": 0}).to_list(500)
+
+
+@api.post("/admin/menu", status_code=201)
+async def admin_create_menu_item(b: MenuItemIn, authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    if b.category not in MENU_CATEGORIES:
+        raise HTTPException(400, f"Invalid category. Allowed: {', '.join(MENU_CATEGORIES)}")
+    if not b.name.strip():
+        raise HTTPException(400, "Name required")
+    doc = {
+        "id": f"m-{secrets.token_hex(5)}",
+        "category": b.category,
+        "name": b.name.strip(),
+        "desc_fr": b.desc_fr or "", "desc_en": b.desc_en or "",
+        "ingredients_fr": b.ingredients_fr or "", "ingredients_en": b.ingredients_en or "",
+        "image": b.image or "",
+        "created_at": now(),
+    }
+    if b.prices:
+        doc["prices"] = {str(k): float(v) for k, v in b.prices.items()}
+    elif b.price is not None:
+        doc["price"] = float(b.price)
+    await db.menu.insert_one(dict(doc))
+    await _bump_menu_rev()
+    doc.pop("_id", None)
+    doc.pop("created_at", None)
+    return doc
+
+
+@api.patch("/admin/menu/{item_id}")
+async def admin_update_menu_item(item_id: str, b: MenuItemUpdate, authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    existing = await db.menu.find_one({"id": item_id}, {"_id": 0})
+    if not existing:
+        raise HTTPException(404, "Menu item not found")
+    update: dict = {}
+    if b.category is not None:
+        if b.category not in MENU_CATEGORIES:
+            raise HTTPException(400, "Invalid category")
+        update["category"] = b.category
+    for fld in ("name", "desc_fr", "desc_en", "ingredients_fr", "ingredients_en", "image"):
+        v = getattr(b, fld)
+        if v is not None:
+            update[fld] = v
+    # Pricing: if prices map provided, set it and drop single price; if single price provided, set it and drop map.
+    unset: dict = {}
+    if b.prices is not None:
+        update["prices"] = {str(k): float(v) for k, v in b.prices.items()}
+        unset["price"] = ""
+    elif b.price is not None:
+        update["price"] = float(b.price)
+        unset["prices"] = ""
+    ops: dict = {}
+    if update:
+        ops["$set"] = update
+    if unset:
+        # Only unset keys that actually exist to avoid no-op churn
+        ops["$unset"] = {k: v for k, v in unset.items() if k in existing}
+    if ops:
+        await db.menu.update_one({"id": item_id}, ops)
+        await _bump_menu_rev()
+    fresh = await db.menu.find_one({"id": item_id}, {"_id": 0})
+    return fresh
+
+
+@api.delete("/admin/menu/{item_id}")
+async def admin_delete_menu_item(item_id: str, authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    r = await db.menu.delete_one({"id": item_id})
+    if r.deleted_count == 0:
+        raise HTTPException(404, "Menu item not found")
+    await _bump_menu_rev()
+    return {"deleted": True, "id": item_id}
 
 # Reservations
 DEFAULT_CAPACITY = {"indoor": 30, "terrace": 20}
