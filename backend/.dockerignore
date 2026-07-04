@@ -1,0 +1,8 @@
+# Files not needed inside the image — keeps the layer small and safer.
+__pycache__
+*.pyc
+tests
+.venv
+.env
+.env.*
+requirements_clean.txt

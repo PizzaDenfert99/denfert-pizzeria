@@ -1,0 +1,97 @@
+# Pizza Denfert — production docker-compose for self-hosted VPS.
+#
+# Brings up 3 services on the host:
+#   - mongo        : MongoDB 7 with a named volume for persistence
+#   - backend      : FastAPI (backend/Dockerfile) on port 8001 inside the network
+#   - nginx        : reverse proxy on host ports 80/443 with a mounted certs dir
+#
+# On first boot:
+#   1. Copy .env.docker.example to .env and fill in real values.
+#   2. Point your DNS A-records at the VPS.
+#   3. Obtain TLS certs (e.g. `certbot certonly --standalone -d api.pizzadenfert.fr`)
+#      into ./nginx/certs/.
+#   4. Run `docker compose up -d --build` — that's it.
+#
+# See DEPLOY.md for the full step-by-step guide.
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: pizzadenfert-mongo
+    restart: unless-stopped
+    # Bound to localhost only (never expose Mongo on the public interface).
+    ports:
+      - "127.0.0.1:27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    networks:
+      - pizza
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: pizzadenfert/backend:latest
+    container_name: pizzadenfert-backend
+    restart: unless-stopped
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      # ---- Required ----
+      MONGO_URL: "mongodb://mongo:27017"
+      DB_NAME: "${DB_NAME:-pizzadenfert}"
+      JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required — generate with 'openssl rand -hex 32'}"
+      # ---- Supabase (menu CMS) ----
+      SUPABASE_URL: "${SUPABASE_URL:-}"
+      SUPABASE_SERVICE_ROLE_KEY: "${SUPABASE_SERVICE_ROLE_KEY:-}"
+      # ---- Optional: SMS / OTP ----
+      SMS_PROVIDER: "${SMS_PROVIDER:-}"
+      OTP_DEMO_MODE: "${OTP_DEMO_MODE:-true}"
+      TWILIO_ACCOUNT_SID: "${TWILIO_ACCOUNT_SID:-}"
+      TWILIO_AUTH_TOKEN: "${TWILIO_AUTH_TOKEN:-}"
+      TWILIO_FROM_NUMBER: "${TWILIO_FROM_NUMBER:-}"
+      OVH_APP_KEY: "${OVH_APP_KEY:-}"
+      OVH_APP_SECRET: "${OVH_APP_SECRET:-}"
+      OVH_CONSUMER_KEY: "${OVH_CONSUMER_KEY:-}"
+      OVH_SMS_SERVICE: "${OVH_SMS_SERVICE:-}"
+      OVH_SMS_SENDER: "${OVH_SMS_SENDER:-}"
+      # ---- Optional: Web Push / VAPID ----
+      VAPID_PUBLIC_KEY: "${VAPID_PUBLIC_KEY:-}"
+      VAPID_PRIVATE_KEY: "${VAPID_PRIVATE_KEY:-}"
+      VAPID_CONTACT: "${VAPID_CONTACT:-mailto:contact@pizzadenfert.fr}"
+      # ---- Optional: Emergent native push relay ----
+      EMERGENT_PUSH_KEY: "${EMERGENT_PUSH_KEY:-placeholder}"
+    # Never publish 8001 on 0.0.0.0 — all traffic reaches the backend through Nginx.
+    expose:
+      - "8001"
+    networks:
+      - pizza
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: pizzadenfert-nginx
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/certs:/etc/nginx/certs:ro
+    networks:
+      - pizza
+
+volumes:
+  mongo_data:
+    driver: local
+
+networks:
+  pizza:
+    driver: bridge

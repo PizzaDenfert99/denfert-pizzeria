@@ -89,6 +89,12 @@ android-sdk/
 !frontend/.env
 !frontend/.env.example
 !backend/.env.example
+!.env.docker.example
+# SSH deploy keys used by the Emergent runtime — must NEVER leak.
+.deploy/
+id_ed25519
+id_ed25519.pub
+
 # Per-build secrets that must NEVER be committed:
 google-services.json
 play-store-service-account.json
