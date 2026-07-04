@@ -43,6 +43,17 @@ else
   log "Docker Compose ready: $(docker compose version)"
 fi
 
+# --- 1b. Detect a host-installed mongod on port 27017 (Hetzner cloud images
+#         sometimes ship one pre-installed and it will collide with docker
+#         compose up if we ever expose that port to the host). ---------------
+if ss -ltn 2>/dev/null | grep -q ':27017 '; then
+  warn "A process is already LISTENING on host port 27017."
+  warn "Our docker-compose no longer binds Mongo to the host, so the containers"
+  warn "themselves are safe. But if you also run 'docker run -p 27017:27017' or"
+  warn "add ports mapping later, it WILL collide. Consider stopping the host"
+  warn "mongod:   systemctl stop mongod && systemctl disable mongod"
+fi
+
 # --- 2. .env ---------------------------------------------------------------
 if [ ! -f .env ]; then
   log "Generating .env from .env.docker.example ..."

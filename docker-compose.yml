@@ -15,9 +15,15 @@ services:
     image: mongo:7
     container_name: pizzadenfert-mongo
     restart: unless-stopped
-    # Bound to localhost only (never expose Mongo on the public interface).
-    ports:
-      - "127.0.0.1:27017:27017"
+    # NO host port binding. Other services reach MongoDB via the Docker
+    # network as `mongo:27017` (see MONGO_URL below). This avoids collisions
+    # with any host-installed mongod (Hetzner cloud images sometimes ship
+    # one pre-installed) and prevents accidental public exposure.
+    # If you need to inspect the DB with Compass, use `docker compose exec
+    # mongo mongosh` or a temporary `-p 27018:27017` override in a
+    # docker-compose.override.yml.
+    expose:
+      - "27017"
     volumes:
       - mongo_data:/data/db
     healthcheck:
