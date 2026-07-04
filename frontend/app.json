@@ -14,7 +14,8 @@
         "NSCameraUsageDescription": "Scan customer loyalty QR codes",
         "NSPhotoLibraryUsageDescription": "Select photos for menu items",
         "NSPhotoLibraryAddUsageDescription": "Save edited menu photos"
-      }
+      },
+      "bundleIdentifier": "app.emergent.denfertpizzeriac24d27f9"
     },
     "android": {
       "adaptiveIcon": {
@@ -29,7 +30,8 @@
         "android.permission.POST_NOTIFICATIONS",
         "android.permission.VIBRATE",
         "android.permission.WAKE_LOCK"
-      ]
+      ],
+      "package": "app.emergent.denfertpizzeria69d64b30"
     },
     "web": {
       "bundler": "metro",
