@@ -1,0 +1,58 @@
+name: Deploy to VPS
+
+# Auto-deploy on push to `main` after CI passes.
+#
+# REQUIRED GitHub secrets (set at Settings → Secrets and variables → Actions):
+#   VPS_HOST    e.g. "vps.pizzadenfert.fr" or IP.
+#   VPS_USER    e.g. "root" or a sudoer.
+#   VPS_SSH_KEY Private key for a GitHub-Actions-only account on the VPS.
+#              MUST be a fresh key generated AFTER the 2026-07 rotation —
+#              never reuse the old .deploy/id_ed25519.
+#
+# The VPS side must have the repo cloned at /root/denfert-pizzeria and the
+# deploy user must be able to run `docker compose` (either as root or via
+# passwordless sudo for the docker binary).
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: SSH deploy
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          script_stop: true
+          command_timeout: 15m
+          script: |
+            set -euo pipefail
+            cd /root/denfert-pizzeria
+            echo "==> git pull"
+            git fetch --all --prune
+            git reset --hard origin/main
+            echo "==> docker compose build + restart"
+            docker compose up -d --build backend nginx
+            echo "==> waiting for backend to be healthy"
+            for i in $(seq 1 30); do
+              if docker compose ps backend | grep -q healthy; then
+                echo "backend healthy after ${i}s"
+                break
+              fi
+              sleep 1
+            done
+            echo "==> smoke tests"
+            curl -fsS https://api.pizzadenfert.fr/api/healthz
+            curl -fsS https://loyalty.pizzadenfert.fr/api/healthz
+            echo "==> deploy done"

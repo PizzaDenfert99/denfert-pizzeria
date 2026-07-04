@@ -1,0 +1,50 @@
+name: CI
+
+# Fast checks that run on every pull request and every push to main.
+# Kept intentionally minimal — heavier suites live in a separate workflow.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend — syntax + lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install ruff
+        run: pip install ruff==0.6.9
+
+      - name: Syntax check
+        run: python -m py_compile backend/server.py
+
+      - name: Ruff (production-bug rules only — no style noise)
+        run: |
+          ruff check backend/server.py \
+            --select=E9,F63,F7,F82,B,I \
+            --ignore=E501,F401 \
+            --output-format=github
+
+  compose:
+    name: docker-compose — config validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fake .env for validation
+        run: |
+          cp .env.docker.example .env
+          sed -i 's|^JWT_SECRET=.*|JWT_SECRET=00000000000000000000000000000000|' .env
+
+      - name: docker compose config
+        run: docker compose config >/dev/null
+
+      - name: docker build (backend, no push)
+        run: docker build -t pizzadenfert/backend:ci backend/
