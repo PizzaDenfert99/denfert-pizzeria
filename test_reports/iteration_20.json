@@ -1,0 +1,35 @@
+{
+  "summary": "Iteration 20 — Docker Compose Mongo host-port fix regression verified. Ran 9 pytest checks: 3 live backend endpoints (/api/healthz, /api/menu, /api/menu/version) all 200 with valid payloads (menu has 21 items, version has integer 'rev'); 4 static docker-compose.yml shape checks (valid YAML, mongo has no 'ports' key, mongo 'expose: [27017]' present, backend still uses MONGO_URL=mongodb://mongo:27017); 1 repo-wide grep for stray '27017:27017' host-port mapping (only match is a warning-message string inside scripts/bootstrap.sh — not an actual binding); 1 bootstrap.sh preflight check (uses ss + warn(), non-blocking). All 9 tests PASS. No regression in server.py behavior. Backend under supervisor keeps serving from local MongoDB unchanged.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [],
+    "react_native_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_deploy_regression_iter20.py",
+    "/app/test_reports/pytest/iteration_20_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "docker-compose.yml mongo service correctly uses 'expose: [27017]' (docker-network only) with no host 'ports:' mapping — matches the stated fix (commit 10bf97d).",
+    "backend service still resolves MongoDB via docker DNS 'mongodb://mongo:27017' — connectivity path unchanged for containerised deploy.",
+    "scripts/bootstrap.sh preflight uses 'ss -ltn | grep :27017' with warn() (not die()) — deploy remains unblocked on Hetzner images that ship a host mongod, as intended.",
+    "Note (out of scope for this fix, but observed in backend.err.log history): a prior server.py had an unresolved git merge-conflict marker ('>>>>>>> 8258ca8d...') that caused SyntaxError. The current running process is healthy, so this appears already resolved on-disk — flagging only so main agent is aware."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_deploy_regression_iter20.py",
+    "/app/test_reports/pytest/iteration_20_results.xml",
+    "/app/test_reports/iteration_20.json"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "skipped-per-request"},
+  "seed_data_creation": "None. Existing 21-item menu in local MongoDB used as-is.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Iter 20 verified deploy-only fix (docker-compose.yml removed host-port binding for mongo; scripts/bootstrap.sh added non-blocking :27017 preflight). Live sandbox backend endpoints /api/healthz, /api/menu, /api/menu/version confirmed 200/OK. Pytest suite at /app/backend/tests/test_deploy_regression_iter20.py is idempotent and can be re-run as a regression guard. Frontend intentionally not tested.",
+  "rca_of_issue": "N/A — this iteration validates a previously-applied infrastructure fix. Root cause of the original bug: docker-compose.yml published mongo on host 127.0.0.1:27017, colliding with the pre-installed mongod on Hetzner cloud images. Fix (already applied): replaced 'ports: - 127.0.0.1:27017:27017' with 'expose: - 27017' so Mongo is reachable only inside the docker network via 'mongo:27017'. Verified: static YAML shape, backend env still points at docker DNS, no stray host-port mapping in the repo, and the running supervisor backend continues to serve /api/healthz, /api/menu, /api/menu/version correctly."
+}
