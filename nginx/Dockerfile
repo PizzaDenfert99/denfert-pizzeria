@@ -32,9 +32,9 @@ RUN corepack disable >/dev/null 2>&1 || true && \
 
 # --- Copy the rest of the source and export ---
 COPY frontend/ ./
-# `npx expo export -p web -o dist` produces a fully static bundle under ./dist.
+# `npx expo export -p web --output-dir dist` produces a fully static bundle under ./dist.
 # `--no-minify` is NOT used — we want the small, cached production output.
-RUN npx expo export -p web -o dist
+RUN npx expo export -p web --output-dir dist
 
 # ---------------------------------------------------------------------------
 # Stage 2: nginx runtime
