@@ -1856,6 +1856,75 @@ async def api_root(): return {"service": "Pizza Denfert API", "status": "ok"}
 
 
 # ============================================================================
+# Public Supabase-backed menu API — read-only proxy endpoints for the CMS menu
+# living in Supabase (see supabase/setup.sql). Proxied server-side with the
+# service-role key so the customer app needs no Supabase credentials of its
+# own. The legacy MongoDB-backed /api/menu route above is untouched.
+# ============================================================================
+
+def _sb_read_headers():
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(503, "Supabase not configured on server (SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing).")
+    return {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+    }
+
+
+@api.get("/public/categories")
+async def public_categories():
+    headers = _sb_read_headers()
+    async with httpx.AsyncClient(timeout=15.0) as cli:
+        r = await cli.get(
+            f"{SUPABASE_URL}/rest/v1/categories",
+            headers=headers,
+            params={
+                "select": "id,name,slug,sort_order",
+                "is_active": "eq.true",
+                "order": "sort_order.asc",
+            },
+        )
+    if r.status_code >= 400:
+        raise HTTPException(502, f"Supabase categories fetch failed: {r.status_code} {r.text[:300]}")
+    return r.json()
+
+
+@api.get("/public/menu-items")
+async def public_menu_items():
+    headers = _sb_read_headers()
+    async with httpx.AsyncClient(timeout=15.0) as cli:
+        r = await cli.get(
+            f"{SUPABASE_URL}/rest/v1/menu_items",
+            headers=headers,
+            params={
+                "select": "id,name,description,ingredients,prices,image_url,thumbnail_url,category_id,sort_order",
+                "is_active": "eq.true",
+                "order": "sort_order.asc",
+            },
+        )
+    if r.status_code >= 400:
+        raise HTTPException(502, f"Supabase menu_items fetch failed: {r.status_code} {r.text[:300]}")
+    return r.json()
+
+
+@api.get("/public/restaurant-settings")
+async def public_restaurant_settings():
+    headers = _sb_read_headers()
+    async with httpx.AsyncClient(timeout=15.0) as cli:
+        r = await cli.get(
+            f"{SUPABASE_URL}/rest/v1/restaurant_settings",
+            headers=headers,
+            params={"select": "opening_hours,phone,address,updated_at", "limit": "1"},
+        )
+    if r.status_code >= 400:
+        raise HTTPException(502, f"Supabase restaurant_settings fetch failed: {r.status_code} {r.text[:300]}")
+    rows = r.json()
+    if not rows:
+        raise HTTPException(404, "Restaurant settings not configured")
+    return rows[0]
+
+
+# ============================================================================
 # Supabase CMS — one-time bulk seed of the legacy MongoDB menu into Supabase.
 # Protected by FastAPI admin JWT. Uses the server-only SERVICE_ROLE_KEY so it
 # bypasses RLS for this single trusted call. Idempotent on category slug + item
