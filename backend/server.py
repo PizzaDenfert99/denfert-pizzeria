@@ -1,4 +1,4 @@
-from fastapi import FastAPI, APIRouter, HTTPException, Header
+from fastapi import FastAPI, APIRouter, HTTPException, Header, File, Form, UploadFile
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -1922,6 +1922,229 @@ async def public_restaurant_settings():
     if not rows:
         raise HTTPException(404, "Restaurant settings not configured")
     return rows[0]
+
+
+# ============================================================================
+# Admin CMS (Supabase-backed categories/menu_items/restaurant_settings) — full
+# CRUD proxied server-side with the service-role key, protected by our own
+# FastAPI admin JWT (_require_admin), NOT Supabase Auth. This lets the CMS
+# frontend reuse the same login/session as every other /admin/* screen
+# instead of maintaining a second, separate Supabase Auth session.
+# ============================================================================
+
+class CmsCategoryIn(BaseModel):
+    name: str
+    slug: str
+    sort_order: Optional[int] = 0
+    is_active: Optional[bool] = True
+
+
+class CmsCategoryUpdate(BaseModel):
+    name: Optional[str] = None
+    slug: Optional[str] = None
+    sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class CmsMenuItemIn(BaseModel):
+    name: str
+    description: Optional[str] = None
+    ingredients: Optional[List[str]] = None
+    prices: Optional[dict] = None
+    image_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    category_id: Optional[str] = None
+    sort_order: Optional[int] = 0
+    is_active: Optional[bool] = True
+
+
+class CmsMenuItemUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    ingredients: Optional[List[str]] = None
+    prices: Optional[dict] = None
+    image_url: Optional[str] = None
+    thumbnail_url: Optional[str] = None
+    category_id: Optional[str] = None
+    sort_order: Optional[int] = None
+    is_active: Optional[bool] = None
+
+
+class CmsSettingsUpdate(BaseModel):
+    opening_hours: Optional[dict] = None
+    phone: Optional[str] = None
+    address: Optional[str] = None
+
+
+async def _sb_rest(method: str, path: str, **kwargs) -> httpx.Response:
+    headers = {**_sb_headers(), **kwargs.pop("headers", {})}
+    async with httpx.AsyncClient(timeout=20.0) as cli:
+        return await cli.request(method, f"{SUPABASE_URL}/rest/v1{path}", headers=headers, **kwargs)
+
+
+def _sb_raise_if_error(r: httpx.Response, what: str):
+    if r.status_code >= 400:
+        raise HTTPException(502, f"Supabase {what} failed: {r.status_code} {r.text[:300]}")
+
+
+# ---- Categories ----
+@api.get("/admin/cms/categories")
+async def admin_cms_list_categories(authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    r = await _sb_rest("GET", "/categories", params={"select": "*", "order": "sort_order.asc"})
+    _sb_raise_if_error(r, "categories fetch")
+    return r.json()
+
+
+@api.post("/admin/cms/categories", status_code=201)
+async def admin_cms_create_category(b: CmsCategoryIn, authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    payload = {"name": b.name, "slug": b.slug, "sort_order": b.sort_order or 0, "is_active": b.is_active if b.is_active is not None else True}
+    r = await _sb_rest("POST", "/categories", json=payload)
+    _sb_raise_if_error(r, "category create")
+    rows = r.json()
+    return rows[0] if rows else {}
+
+
+@api.patch("/admin/cms/categories/{cat_id}")
+async def admin_cms_update_category(cat_id: str, b: CmsCategoryUpdate, authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    payload = {k: v for k, v in b.model_dump().items() if v is not None}
+    if not payload:
+        raise HTTPException(400, "No fields to update")
+    r = await _sb_rest("PATCH", "/categories", params={"id": f"eq.{cat_id}"}, json=payload)
+    _sb_raise_if_error(r, "category update")
+    rows = r.json()
+    if not rows:
+        raise HTTPException(404, "Category not found")
+    return rows[0]
+
+
+@api.delete("/admin/cms/categories/{cat_id}")
+async def admin_cms_delete_category(cat_id: str, authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    r = await _sb_rest("DELETE", "/categories", params={"id": f"eq.{cat_id}"})
+    _sb_raise_if_error(r, "category delete")
+    rows = r.json()
+    if not rows:
+        raise HTTPException(404, "Category not found")
+    return {"deleted": True}
+
+
+# ---- Menu items ----
+@api.get("/admin/cms/menu-items")
+async def admin_cms_list_menu_items(authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    r = await _sb_rest("GET", "/menu_items", params={"select": "*", "order": "sort_order.asc"})
+    _sb_raise_if_error(r, "menu_items fetch")
+    return r.json()
+
+
+@api.post("/admin/cms/menu-items", status_code=201)
+async def admin_cms_create_menu_item(b: CmsMenuItemIn, authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    payload = {
+        "name": b.name,
+        "description": b.description,
+        "ingredients": b.ingredients or [],
+        "prices": b.prices or {},
+        "image_url": b.image_url,
+        "thumbnail_url": b.thumbnail_url,
+        "category_id": b.category_id,
+        "sort_order": b.sort_order or 0,
+        "is_active": b.is_active if b.is_active is not None else True,
+    }
+    r = await _sb_rest("POST", "/menu_items", json=payload)
+    _sb_raise_if_error(r, "menu_item create")
+    rows = r.json()
+    return rows[0] if rows else {}
+
+
+@api.patch("/admin/cms/menu-items/{item_id}")
+async def admin_cms_update_menu_item(item_id: str, b: CmsMenuItemUpdate, authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    payload = {k: v for k, v in b.model_dump().items() if v is not None}
+    if not payload:
+        raise HTTPException(400, "No fields to update")
+    r = await _sb_rest("PATCH", "/menu_items", params={"id": f"eq.{item_id}"}, json=payload)
+    _sb_raise_if_error(r, "menu_item update")
+    rows = r.json()
+    if not rows:
+        raise HTTPException(404, "Menu item not found")
+    return rows[0]
+
+
+@api.delete("/admin/cms/menu-items/{item_id}")
+async def admin_cms_delete_menu_item(item_id: str, authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    r = await _sb_rest("DELETE", "/menu_items", params={"id": f"eq.{item_id}"})
+    _sb_raise_if_error(r, "menu_item delete")
+    rows = r.json()
+    if not rows:
+        raise HTTPException(404, "Menu item not found")
+    return {"deleted": True}
+
+
+# ---- Restaurant settings (single row) ----
+@api.get("/admin/cms/restaurant-settings")
+async def admin_cms_get_settings(authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    r = await _sb_rest("GET", "/restaurant_settings", params={"select": "*", "limit": "1"})
+    _sb_raise_if_error(r, "restaurant_settings fetch")
+    rows = r.json()
+    if not rows:
+        raise HTTPException(404, "Restaurant settings not configured")
+    return rows[0]
+
+
+@api.patch("/admin/cms/restaurant-settings/{settings_id}")
+async def admin_cms_update_settings(settings_id: str, b: CmsSettingsUpdate, authorization: Optional[str] = Header(None)):
+    await _require_admin(authorization)
+    payload = {k: v for k, v in b.model_dump().items() if v is not None}
+    if not payload:
+        raise HTTPException(400, "No fields to update")
+    r = await _sb_rest("PATCH", "/restaurant_settings", params={"id": f"eq.{settings_id}"}, json=payload)
+    _sb_raise_if_error(r, "restaurant_settings update")
+    rows = r.json()
+    if not rows:
+        raise HTTPException(404, "Restaurant settings not found")
+    return rows[0]
+
+
+# ---- Image upload (menu-images bucket) ----
+@api.post("/admin/cms/upload-image")
+async def admin_cms_upload_image(
+    file: UploadFile = File(...),
+    item_id: str = Form(...),
+    kind: str = Form("original"),
+    authorization: Optional[str] = Header(None),
+):
+    await _require_admin(authorization)
+    if kind not in ("original", "thumb"):
+        raise HTTPException(400, "kind must be 'original' or 'thumb'")
+    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
+        raise HTTPException(503, "Supabase not configured on server (SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing).")
+    safe_item_id = re.sub(r"[^a-zA-Z0-9_-]", "", item_id) or "new"
+    raw_ext = (file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "jpg").lower()
+    ext = re.sub(r"[^a-z0-9]", "", raw_ext) or "jpg"
+    if kind == "thumb":
+        ext = "jpg"  # thumbnails are always re-encoded as JPEG client-side
+    stamp = int(datetime.now(timezone.utc).timestamp() * 1000)
+    path = f"menu_items/{safe_item_id}/{stamp}_{kind}.{ext}"
+    content = await file.read()
+    if len(content) > 20 * 1024 * 1024:
+        raise HTTPException(400, "File too large (max 20 MB)")
+    upload_headers = {
+        "apikey": SUPABASE_SERVICE_ROLE_KEY,
+        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
+        "Content-Type": file.content_type or "application/octet-stream",
+        "x-upsert": "true",
+    }
+    async with httpx.AsyncClient(timeout=30.0) as cli:
+        r = await cli.post(f"{SUPABASE_URL}/storage/v1/object/menu-images/{path}", headers=upload_headers, content=content)
+    if r.status_code >= 400:
+        raise HTTPException(502, f"Supabase storage upload failed: {r.status_code} {r.text[:300]}")
+    return {"url": f"{SUPABASE_URL}/storage/v1/object/public/menu-images/{path}"}
 
 
 # ============================================================================

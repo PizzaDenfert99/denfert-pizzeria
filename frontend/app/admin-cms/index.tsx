@@ -3,60 +3,48 @@ import { View, Text, StyleSheet, Pressable, TextInput, ActivityIndicator, Scroll
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { getSupabase, isSupabaseConfigured } from "@/src/lib/supabase";
+import { useAuth } from "@/src/auth-context";
 import { theme } from "@/src/theme";
 
 export default function AdminCmsLogin() {
   const router = useRouter();
+  const { user, loading, signInEmail } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [bootLoading, setBootLoading] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // If a session already exists and the user is in `admins`, jump straight to dashboard.
+  // Already signed in with an admin session → jump straight to the dashboard.
   useEffect(() => {
-    (async () => {
-      if (!isSupabaseConfigured()) { setBootLoading(false); return; }
-      try {
-        const sb = getSupabase();
-        const { data: { user } } = await sb.auth.getUser();
-        if (user) {
-          const { data: adminRow } = await sb.from("admins").select("user_id").eq("user_id", user.id).maybeSingle();
-          if (adminRow) router.replace("/admin-cms/dashboard");
-        }
-      } catch {}
-      setBootLoading(false);
-    })();
-  }, [router]);
+    if (!loading && user?.is_admin) router.replace("/admin-cms/dashboard");
+  }, [user, loading, router]);
 
   const submit = async () => {
     setErr(null);
-    if (!isSupabaseConfigured()) {
-      setErr("Supabase env vars missing — see /app/SUPABASE_SETUP.md");
-      return;
-    }
-    setLoading(true);
+    setSubmitting(true);
     try {
-      const sb = getSupabase();
-      const { data, error } = await sb.auth.signInWithPassword({ email: email.trim(), password });
-      if (error) throw error;
-      // verify admin membership
-      const { data: adminRow, error: adminErr } = await sb
-        .from("admins").select("user_id").eq("user_id", data.user!.id).maybeSingle();
-      if (adminErr || !adminRow) {
-        await sb.auth.signOut();
-        throw new Error("Not an admin");
-      }
-      router.replace("/admin-cms/dashboard");
+      await signInEmail(email.trim(), password);
+      // signInEmail throws on failure; success is picked up by the effect above
+      // once `user` updates, but we also check here in case is_admin is false.
     } catch (e: any) {
-      setErr(e?.message || "Sign-in failed");
+      setErr(e?.message || "Échec de connexion");
     } finally {
-      setLoading(false);
+      setSubmitting(false);
     }
   };
 
-  if (bootLoading) return <View style={s.container}><ActivityIndicator color={theme.color.brand} style={{ flex: 1 }} /></View>;
+  if (loading) return <View style={s.container}><ActivityIndicator color={theme.color.brand} style={{ flex: 1 }} /></View>;
+
+  if (user && !user.is_admin) {
+    return (
+      <View style={s.container}>
+        <SafeAreaView style={{ padding: 28 }}>
+          <Text style={s.h1}>Accès refusé</Text>
+          <Text style={s.body}>Ce compte n&apos;a pas les droits admin.</Text>
+        </SafeAreaView>
+      </View>
+    );
+  }
 
   return (
     <View testID="cms-login" style={s.container}>
@@ -70,8 +58,8 @@ export default function AdminCmsLogin() {
             <TextInput testID="cms-email" style={s.input} placeholder="Email" placeholderTextColor={theme.color.muted} autoCapitalize="none" keyboardType="email-address" value={email} onChangeText={setEmail} />
             <TextInput testID="cms-password" style={s.input} placeholder="Mot de passe" placeholderTextColor={theme.color.muted} secureTextEntry value={password} onChangeText={setPassword} />
             {err && <Text style={s.err}>{err}</Text>}
-            <Pressable testID="cms-submit" onPress={submit} disabled={loading} style={s.btn}>
-              {loading ? <ActivityIndicator color={theme.color.onBrandPrimary} /> : <Text style={s.btnTxt}>Connexion sécurisée</Text>}
+            <Pressable testID="cms-submit" onPress={submit} disabled={submitting} style={s.btn}>
+              {submitting ? <ActivityIndicator color={theme.color.onBrandPrimary} /> : <Text style={s.btnTxt}>Connexion sécurisée</Text>}
             </Pressable>
             <Pressable onPress={() => router.replace("/")}><Text style={s.linkBack}>← Retour au site</Text></Pressable>
           </ScrollView>
@@ -92,4 +80,6 @@ const s = StyleSheet.create({
   btn: { height: 54, borderRadius: 12, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center", marginTop: 8 },
   btnTxt: { color: theme.color.onBrandPrimary, fontWeight: "700", letterSpacing: 1, fontSize: 14 },
   linkBack: { color: theme.color.onSurfaceTertiary, textAlign: "center", marginTop: 18, fontSize: 13 },
+  h1: { color: theme.color.onSurface, fontSize: 20, fontWeight: "400", marginTop: 2 },
+  body: { color: theme.color.onSurfaceSecondary, fontSize: 13, marginTop: 12, lineHeight: 18 },
 });

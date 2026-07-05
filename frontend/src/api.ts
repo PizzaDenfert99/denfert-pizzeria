@@ -119,6 +119,46 @@ export const api = {
   adminGetKioskSettings: () => req("/admin/ads/settings"),
   adminUpdateKioskSettings: (patch: { idle_seconds?: number; loop?: boolean; default_duration_ms?: number; show_section_titles?: boolean }) =>
     req("/admin/ads/settings", { method: "PUT", body: JSON.stringify(patch) }),
+  // Admin CMS (Supabase-backed categories/menu_items/restaurant_settings) — proxied
+  // server-side with the service-role key, protected by the same admin JWT as everything
+  // else above (no separate Supabase Auth session).
+  adminCmsListCategories: () => req("/admin/cms/categories"),
+  adminCmsCreateCategory: (data: { name: string; slug: string; sort_order?: number; is_active?: boolean }) =>
+    req("/admin/cms/categories", { method: "POST", body: JSON.stringify(data) }),
+  adminCmsUpdateCategory: (id: string, patch: any) =>
+    req(`/admin/cms/categories/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  adminCmsDeleteCategory: (id: string) =>
+    req(`/admin/cms/categories/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  adminCmsListMenuItems: () => req("/admin/cms/menu-items"),
+  adminCmsCreateMenuItem: (data: any) =>
+    req("/admin/cms/menu-items", { method: "POST", body: JSON.stringify(data) }),
+  adminCmsUpdateMenuItem: (id: string, patch: any) =>
+    req(`/admin/cms/menu-items/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  adminCmsDeleteMenuItem: (id: string) =>
+    req(`/admin/cms/menu-items/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  adminCmsSeedFromMongo: () => req("/admin/cms/seed-from-mongo", { method: "POST" }),
+  adminCmsGetSettings: () => req("/admin/cms/restaurant-settings"),
+  adminCmsUpdateSettings: (id: string, patch: any) =>
+    req(`/admin/cms/restaurant-settings/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
+  adminCmsUploadImage: async (
+    itemId: string,
+    file: { name: string; type: string; blob?: Blob } & Partial<Blob>,
+    kind: "original" | "thumb" = "original",
+  ): Promise<{ url: string }> => {
+    const form = new FormData();
+    form.append("item_id", itemId);
+    form.append("kind", kind);
+    form.append("file", (file.blob || (file as any)) as any, file.name);
+    const tok = await loadToken();
+    const headers: any = {};
+    if (tok) headers["Authorization"] = `Bearer ${tok}`;
+    const r = await fetch(`${BASE}/api/admin/cms/upload-image`, { method: "POST", headers, body: form });
+    if (!r.ok) {
+      const txt = await r.text();
+      throw new Error(`${r.status}: ${txt}`);
+    }
+    return r.json();
+  },
 };
 
 export { BASE };

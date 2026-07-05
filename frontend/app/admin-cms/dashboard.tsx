@@ -3,7 +3,8 @@ import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndic
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
-import { getSupabase, isSupabaseConfigured } from "@/src/lib/supabase";
+import { useAuth } from "@/src/auth-context";
+import { api } from "@/src/api";
 import { theme } from "@/src/theme";
 import { pickImageFromGallery, takePhotoWithCamera } from "@/src/imagePicker";
 
@@ -11,8 +12,8 @@ type Tab = "categories" | "items" | "settings";
 
 export default function CmsDashboard() {
   const router = useRouter();
+  const { user, loading, signOut: authSignOut } = useAuth();
   const [tab, setTab] = useState<Tab>("items");
-  const [user, setUser] = useState<any>(null);
   const [boot, setBoot] = useState(true);
   const [items, setItems] = useState<any[]>([]);
   const [cats, setCats] = useState<any[]>([]);
@@ -27,46 +28,31 @@ export default function CmsDashboard() {
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(null), 2500); };
 
   const loadAll = useCallback(async () => {
-    if (!isSupabaseConfigured()) return;
-    const sb = getSupabase();
     const [c, i, st] = await Promise.all([
-      sb.from("categories").select("*").order("sort_order"),
-      sb.from("menu_items").select("*").order("sort_order"),
-      sb.from("restaurant_settings").select("*").maybeSingle(),
+      api.adminCmsListCategories(),
+      api.adminCmsListMenuItems(),
+      api.adminCmsGetSettings().catch(() => null),
     ]);
-    setCats(c.data || []);
-    setItems(i.data || []);
-    setSettings(st.data || null);
+    setCats(c || []);
+    setItems(i || []);
+    setSettings(st || null);
   }, []);
 
   useEffect(() => {
+    if (loading) return;
+    if (!user?.is_admin) { router.replace("/admin-cms"); return; }
     (async () => {
-      if (!isSupabaseConfigured()) { setBoot(false); return; }
-      const sb = getSupabase();
-      const { data: { user: u } } = await sb.auth.getUser();
-      if (!u) { router.replace("/admin-cms"); return; }
-      const { data: adminRow } = await sb.from("admins").select("user_id").eq("user_id", u.id).maybeSingle();
-      if (!adminRow) { await sb.auth.signOut(); router.replace("/admin-cms"); return; }
-      setUser(u);
       await loadAll();
       setBoot(false);
     })();
-  }, [router, loadAll]);
+  }, [user, loading, router, loadAll]);
 
-  const signOut = async () => { await getSupabase().auth.signOut(); router.replace("/admin-cms"); };
+  const signOut = async () => { await authSignOut(); router.replace("/admin-cms"); };
 
   const importSeed = async () => {
     setImporting(true);
     try {
-      const ADMIN_API_PROMPT = window.prompt ? window.prompt("Mot de passe admin FastAPI (admin@pizzadenfert.fr)") : null;
-      if (!ADMIN_API_PROMPT) { setImporting(false); return; }
-      const base = process.env.EXPO_PUBLIC_BACKEND_URL || "";
-      const loginRes = await fetch(`${base}/api/auth/login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: "admin@pizzadenfert.fr", password: ADMIN_API_PROMPT }) });
-      if (!loginRes.ok) throw new Error("FastAPI admin login failed");
-      const { token } = await loginRes.json();
-      const seedRes = await fetch(`${base}/api/admin/cms/seed-from-mongo`, { method: "POST", headers: { Authorization: `Bearer ${token}` } });
-      if (!seedRes.ok) throw new Error("Import failed: " + (await seedRes.text()));
-      const out = await seedRes.json();
+      const out = await api.adminCmsSeedFromMongo();
       showToast(`Importé : ${out.inserted_items} pizzas, ${out.inserted_categories} catégories`);
       await loadAll();
     } catch (e: any) {
@@ -76,7 +62,6 @@ export default function CmsDashboard() {
 
   const upsertItem = async (it: any) => {
     setSavingId(it.id || "new");
-    const sb = getSupabase();
     const payload = {
       name: it.name,
       description: it.description || null,
@@ -87,38 +72,47 @@ export default function CmsDashboard() {
       sort_order: Number(it.sort_order) || 0,
       is_active: it.is_active !== false,
     };
-    let q;
-    if (it.id) q = await sb.from("menu_items").update(payload).eq("id", it.id);
-    else q = await sb.from("menu_items").insert(payload);
-    setSavingId(null);
-    if (q.error) { Alert.alert("Erreur", q.error.message); return; }
-    setEditing(null); showToast("Enregistré"); loadAll();
+    try {
+      if (it.id) await api.adminCmsUpdateMenuItem(it.id, payload);
+      else await api.adminCmsCreateMenuItem(payload);
+      setEditing(null); showToast("Enregistré"); loadAll();
+    } catch (e: any) {
+      Alert.alert("Erreur", e?.message || "Échec");
+    } finally { setSavingId(null); }
   };
 
   const upsertCat = async (c: any) => {
     setSavingId(c.id || "new-cat");
-    const sb = getSupabase();
     const payload = { name: c.name, slug: c.slug, sort_order: Number(c.sort_order) || 0, is_active: c.is_active !== false };
-    let q;
-    if (c.id) q = await sb.from("categories").update(payload).eq("id", c.id);
-    else q = await sb.from("categories").insert(payload);
-    setSavingId(null);
-    if (q.error) { Alert.alert("Erreur", q.error.message); return; }
-    setEditingCat(null); showToast("Catégorie enregistrée"); loadAll();
+    try {
+      if (c.id) await api.adminCmsUpdateCategory(c.id, payload);
+      else await api.adminCmsCreateCategory(payload);
+      setEditingCat(null); showToast("Catégorie enregistrée"); loadAll();
+    } catch (e: any) {
+      Alert.alert("Erreur", e?.message || "Échec");
+    } finally { setSavingId(null); }
   };
 
   const toggleActive = async (table: "menu_items" | "categories", row: any) => {
-    const sb = getSupabase();
-    const { error } = await sb.from(table).update({ is_active: !row.is_active }).eq("id", row.id);
-    if (error) Alert.alert("Erreur", error.message); else loadAll();
+    try {
+      if (table === "menu_items") await api.adminCmsUpdateMenuItem(row.id, { is_active: !row.is_active });
+      else await api.adminCmsUpdateCategory(row.id, { is_active: !row.is_active });
+      loadAll();
+    } catch (e: any) {
+      Alert.alert("Erreur", e?.message || "Échec");
+    }
   };
 
   const remove = async (table: "menu_items" | "categories", row: any) => {
     const ok = Platform.OS === "web" ? (typeof window !== "undefined" ? window.confirm(`Supprimer « ${row.name} » ?`) : true) : true;
     if (!ok) return;
-    const sb = getSupabase();
-    const { error } = await sb.from(table).delete().eq("id", row.id);
-    if (error) Alert.alert("Erreur", error.message); else { showToast("Supprimé"); loadAll(); }
+    try {
+      if (table === "menu_items") await api.adminCmsDeleteMenuItem(row.id);
+      else await api.adminCmsDeleteCategory(row.id);
+      showToast("Supprimé"); loadAll();
+    } catch (e: any) {
+      Alert.alert("Erreur", e?.message || "Échec");
+    }
   };
 
   const reorder = async (row: any, dir: -1 | 1) => {
@@ -126,11 +120,18 @@ export default function CmsDashboard() {
     const sorted = [...list].sort((a, b) => a.sort_order - b.sort_order);
     const idx = sorted.findIndex((x) => x.id === row.id);
     const swap = sorted[idx + dir]; if (!swap) return;
-    const sb = getSupabase();
-    const table = tab === "items" ? "menu_items" : "categories";
-    await sb.from(table).update({ sort_order: swap.sort_order }).eq("id", row.id);
-    await sb.from(table).update({ sort_order: row.sort_order }).eq("id", swap.id);
-    loadAll();
+    try {
+      if (tab === "items") {
+        await api.adminCmsUpdateMenuItem(row.id, { sort_order: swap.sort_order });
+        await api.adminCmsUpdateMenuItem(swap.id, { sort_order: row.sort_order });
+      } else {
+        await api.adminCmsUpdateCategory(row.id, { sort_order: swap.sort_order });
+        await api.adminCmsUpdateCategory(swap.id, { sort_order: row.sort_order });
+      }
+      loadAll();
+    } catch (e: any) {
+      Alert.alert("Erreur", e?.message || "Échec");
+    }
   };
 
   // Generate a high-quality thumbnail in the browser (canvas) without touching the original file.
@@ -176,19 +177,14 @@ export default function CmsDashboard() {
     it: any,
     file: { name: string; type: string; size: number; blob?: Blob } & Partial<Blob>,
   ): Promise<{ original: string; thumbnail: string | null } | null> => {
-    const sb = getSupabase();
-    const ext = (file.name.split(".").pop() || "jpg").toLowerCase().replace(/[^a-z0-9]/g, "") || "jpg";
-    const stamp = Date.now();
-    const base = `menu_items/${it.id || "new"}/${stamp}`;
-    const origPath = `${base}_original.${ext}`;
-    const uploadable: any = file.blob || file;
-
-    // 1. Upload original AS-IS (no compression on our side).
-    const { error: origErr } = await sb.storage
-      .from("menu-images")
-      .upload(origPath, uploadable, { upsert: true, contentType: file.type, cacheControl: "31536000" });
-    if (origErr) { Alert.alert("Erreur upload (original)", origErr.message); return null; }
-    const originalUrl = sb.storage.from("menu-images").getPublicUrl(origPath).data.publicUrl;
+    // 1. Upload original AS-IS (no compression on our side) — proxied server-side.
+    let originalUrl: string;
+    try {
+      const res = await api.adminCmsUploadImage(it.id || "new", file, "original");
+      originalUrl = res.url;
+    } catch (e: any) {
+      Alert.alert("Erreur upload (original)", e?.message || "Échec"); return null;
+    }
 
     // 2. Try to build + upload a thumbnail (web only — uses Canvas API; native skips this step,
     //    the customer screen still works because it falls back to `image_url` when `thumbnail_url` is null).
@@ -196,14 +192,11 @@ export default function CmsDashboard() {
     if (Platform.OS === "web" && (file as any) instanceof File) {
       const thumbBlob = await buildThumbnail(file as any as File, 1600, 0.92);
       if (thumbBlob) {
-        const thumbPath = `${base}_thumb.jpg`;
-        const { error: thErr } = await sb.storage
-          .from("menu-images")
-          .upload(thumbPath, thumbBlob, { upsert: true, contentType: "image/jpeg", cacheControl: "31536000" });
-        if (!thErr) {
-          thumbnailUrl = sb.storage.from("menu-images").getPublicUrl(thumbPath).data.publicUrl;
-        } else {
-          console.warn("thumbnail upload failed (non-fatal):", thErr.message);
+        try {
+          const thumbRes = await api.adminCmsUploadImage(it.id || "new", { name: "thumb.jpg", type: "image/jpeg", blob: thumbBlob }, "thumb");
+          thumbnailUrl = thumbRes.url;
+        } catch (e: any) {
+          console.warn("thumbnail upload failed (non-fatal):", e?.message);
         }
       }
     }
@@ -212,22 +205,17 @@ export default function CmsDashboard() {
 
   const saveSettings = async () => {
     if (!settings) return;
-    const sb = getSupabase();
     let oh: any = settings.opening_hours;
     if (typeof oh === "string") { try { oh = JSON.parse(oh); } catch { Alert.alert("JSON invalide", "opening_hours"); return; } }
-    const { error } = await sb.from("restaurant_settings").update({ opening_hours: oh, phone: settings.phone, address: settings.address }).eq("id", settings.id);
-    if (error) Alert.alert("Erreur", error.message); else showToast("Paramètres sauvegardés");
+    try {
+      await api.adminCmsUpdateSettings(settings.id, { opening_hours: oh, phone: settings.phone, address: settings.address });
+      showToast("Paramètres sauvegardés");
+    } catch (e: any) {
+      Alert.alert("Erreur", e?.message || "Échec");
+    }
   };
 
-  if (boot) return <View style={s.container}><ActivityIndicator color={theme.color.brand} style={{ flex: 1 }} /></View>;
-  if (!isSupabaseConfigured()) {
-    return (
-      <View style={s.container}><SafeAreaView style={{ padding: 28 }}>
-        <Text style={s.h1}>Supabase non configuré</Text>
-        <Text style={s.body}>Renseignez EXPO_PUBLIC_SUPABASE_URL et EXPO_PUBLIC_SUPABASE_ANON_KEY dans /app/frontend/.env puis redémarrez. Voir /app/SUPABASE_SETUP.md</Text>
-      </SafeAreaView></View>
-    );
-  }
+  if (loading || boot) return <View style={s.container}><ActivityIndicator color={theme.color.brand} style={{ flex: 1 }} /></View>;
 
   return (
     <View testID="cms-dashboard" style={s.container}>
@@ -351,20 +339,16 @@ export default function CmsDashboard() {
                     if (picked.size && picked.size > 20 * 1024 * 1024) { Alert.alert("Fichier trop gros", "Max 20 MB"); return; }
                     setSavingId(editing.id);
                     const urls = await uploadImageForItem(editing, picked);
-                    setSavingId(null);
-                    if (!urls) return;
-                    const sb = getSupabase();
+                    if (!urls) { setSavingId(null); return; }
                     const payload: any = { image_url: urls.original };
                     if (urls.thumbnail) payload.thumbnail_url = urls.thumbnail;
-                    let { error } = await sb.from("menu_items").update(payload).eq("id", editing.id);
-                    if (error && /thumbnail_url/i.test(error.message)) {
-                      const { error: e2 } = await sb.from("menu_items").update({ image_url: urls.original }).eq("id", editing.id);
-                      error = e2;
-                      showToast("Image enregistrée (colonne thumbnail_url manquante — voir /app/SUPABASE_SETUP.md)");
-                    } else if (!error) {
+                    try {
+                      await api.adminCmsUpdateMenuItem(editing.id, payload);
                       showToast(urls.thumbnail ? "Image + miniature en ligne" : "Image en ligne");
+                    } catch (e: any) {
+                      Alert.alert("Erreur enregistrement image", e?.message || "Échec");
                     }
-                    if (error) Alert.alert("Erreur enregistrement image", error.message);
+                    setSavingId(null);
                     setEditing({ ...editing, image_url: urls.original, thumbnail_url: urls.thumbnail });
                     loadAll();
                   };
