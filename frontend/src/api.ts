@@ -51,6 +51,10 @@ export const api = {
   me: () => req("/auth/me"),
   logout: () => req("/auth/logout", { method: "POST" }),
   menu: () => req("/menu"),
+  // CMS menu (Supabase-backed), proxied server-side — no Supabase creds on the client.
+  publicCategories: () => req("/public/categories"),
+  publicMenuItems: () => req("/public/menu-items"),
+  publicRestaurantSettings: () => req("/public/restaurant-settings"),
   // Live sync signal — the shared backend bumps a revision counter on every
   // CMS menu write. The customer menu screen polls this every 20s and only
   // refetches the full /menu when the revision changes. Cheap & idempotent.

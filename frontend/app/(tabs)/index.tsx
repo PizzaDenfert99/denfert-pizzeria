@@ -8,7 +8,7 @@ import { useRouter, Redirect } from "expo-router";
 import { theme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { isLoyaltyApp } from "@/src/appMode";
-import { isSupabaseConfigured, fetchRestaurantSettings } from "@/src/lib/supabase";
+import { api } from "@/src/api";
 
 const HERO_URI = "https://customer-assets.emergentagent.com/job_denfert-pizzeria/artifacts/8mhits89_file_00000000dfd471f4be6eb9f4ebd8e6bf.png";
 const RESTAURANT = "https://images.pexels.com/photos/4997894/pexels-photo-4997894.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=900&w=1200";
@@ -32,9 +32,8 @@ function Home() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!isSupabaseConfigured()) return;
       try {
-        const s = await fetchRestaurantSettings();
+        const s = await api.publicRestaurantSettings();
         if (!cancelled && s) setDynSettings({ phone: s.phone, address: s.address });
       } catch {
         // silent — fall back to hardcoded address below.

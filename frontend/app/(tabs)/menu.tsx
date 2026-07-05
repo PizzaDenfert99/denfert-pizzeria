@@ -6,9 +6,9 @@ import { Image } from "expo-image";
 import { useI18n } from "@/src/i18n";
 import { api } from "@/src/api";
 import { theme } from "@/src/theme";
-import { isSupabaseConfigured, fetchActiveCategories, fetchActiveMenuItems, type Category, type MenuItem } from "@/src/lib/supabase";
+import type { Category, MenuItem } from "@/src/lib/supabase";
 
-// Unified shape used by the renderer (works for both Supabase and legacy FastAPI rows).
+// Unified shape used by the renderer (works for both CMS-proxy and legacy FastAPI rows).
 type Row = {
   id: string;
   name: string;
@@ -38,7 +38,7 @@ export default function MenuScreen() {
   const [cat, setCat] = useState<string>("pizzas");
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [source, setSource] = useState<"supabase" | "fastapi" | "loading">("loading");
+  const [source, setSource] = useState<"cms" | "fastapi" | "loading">("loading");
   // Tracks the FastAPI menu revision (bumped by the loyalty backend on every
   // CMS write). Used only when we fall back to the FastAPI source to cheaply
   // detect CMS updates without a full refetch.
@@ -46,42 +46,40 @@ export default function MenuScreen() {
 
   const load = useCallback(async (spinner: boolean = true) => {
     if (spinner) setLoading(true);
-    // --- 1. Try Supabase first (if env vars are set) ---
-    if (isSupabaseConfigured()) {
-      try {
-        const [sbCats, sbItems] = await Promise.all([fetchActiveCategories(), fetchActiveMenuItems()]);
-        if (sbCats.length > 0 || sbItems.length > 0) {
-          const catList = (sbCats as Category[]).map((c) => ({ id: c.id, slug: c.slug, name: c.name, sort_order: c.sort_order }));
-          // Build slug index by category id for items
-          const slugById = new Map<string, string>();
-          (sbCats as Category[]).forEach((c) => slugById.set(c.id, c.slug));
-          const list: Row[] = (sbItems as MenuItem[]).map((it) => ({
-            id: it.id,
-            name: it.name,
-            desc: it.description,
-            ingredients: (it.ingredients || []).join(", ") || null,
-            // Prefer the optimised thumbnail for fast list rendering; fall back to original photo.
-            image: it.thumbnail_url || it.image_url || undefined,
-            // Reconstruct: pizzas (slug=pizzas) have 26/31 prices; others use `default` or first numeric.
-            prices: it.prices && Object.keys(it.prices).some((k) => k !== "default") ? it.prices : null,
-            price: it.prices?.default ?? (typeof it.prices === "object" ? Object.values(it.prices || {})[0] : null) ?? null,
-            category_slug: (it.category_id && slugById.get(it.category_id)) || "pizzas",
-          }));
-          setCats(catList.sort((a, b) => a.sort_order - b.sort_order));
-          setRows(list);
-          // Default selected chip = first category that has items, else first chip
-          if (catList.length > 0) {
-            const firstWithItems = catList.sort((a, b) => a.sort_order - b.sort_order).find((c) => list.some((r) => r.category_slug === c.slug));
-            setCat((prev) => (list.some((r) => r.category_slug === prev) ? prev : (firstWithItems?.slug ?? catList[0].slug)));
-          }
-          setSource("supabase");
-          if (spinner) setLoading(false);
-          return;
+    // --- 1. Try the CMS menu (Supabase-backed, proxied by our own backend) first ---
+    try {
+      const [cmsCats, cmsItems] = await Promise.all([api.publicCategories(), api.publicMenuItems()]);
+      if ((cmsCats as Category[]).length > 0 || (cmsItems as MenuItem[]).length > 0) {
+        const catList = (cmsCats as Category[]).map((c) => ({ id: c.id, slug: c.slug, name: c.name, sort_order: c.sort_order }));
+        // Build slug index by category id for items
+        const slugById = new Map<string, string>();
+        (cmsCats as Category[]).forEach((c) => slugById.set(c.id, c.slug));
+        const list: Row[] = (cmsItems as MenuItem[]).map((it) => ({
+          id: it.id,
+          name: it.name,
+          desc: it.description,
+          ingredients: (it.ingredients || []).join(", ") || null,
+          // Prefer the optimised thumbnail for fast list rendering; fall back to original photo.
+          image: it.thumbnail_url || it.image_url || undefined,
+          // Reconstruct: pizzas (slug=pizzas) have 26/31 prices; others use `default` or first numeric.
+          prices: it.prices && Object.keys(it.prices).some((k) => k !== "default") ? it.prices : null,
+          price: it.prices?.default ?? (typeof it.prices === "object" ? Object.values(it.prices || {})[0] : null) ?? null,
+          category_slug: (it.category_id && slugById.get(it.category_id)) || "pizzas",
+        }));
+        setCats(catList.sort((a, b) => a.sort_order - b.sort_order));
+        setRows(list);
+        // Default selected chip = first category that has items, else first chip
+        if (catList.length > 0) {
+          const firstWithItems = catList.sort((a, b) => a.sort_order - b.sort_order).find((c) => list.some((r) => r.category_slug === c.slug));
+          setCat((prev) => (list.some((r) => r.category_slug === prev) ? prev : (firstWithItems?.slug ?? catList[0].slug)));
         }
-        console.warn("Supabase reachable but no menu rows — falling back to FastAPI seed.");
-      } catch (e) {
-        console.warn("Supabase fetch failed, falling back to FastAPI:", e);
+        setSource("cms");
+        if (spinner) setLoading(false);
+        return;
       }
+      console.warn("CMS menu reachable but no rows — falling back to FastAPI seed.");
+    } catch (e) {
+      console.warn("CMS menu fetch failed, falling back to FastAPI:", e);
     }
     // --- 2. Legacy FastAPI fallback ---
     try {
@@ -115,10 +113,10 @@ export default function MenuScreen() {
   }, [lang]);
 
   // Lightweight sync probe — refetch the menu only when the CMS revision
-  // changed (FastAPI source) or unconditionally poll Supabase (cheap query).
+  // changed (FastAPI source) or unconditionally poll the CMS proxy (cheap query).
   const refreshIfChanged = useCallback(async () => {
-    if (source === "supabase") {
-      // Supabase reads are cheap; just re-run silently.
+    if (source === "cms") {
+      // CMS proxy reads are cheap; just re-run silently.
       await load(false);
       return;
     }
@@ -233,9 +231,9 @@ export default function MenuScreen() {
           }}
         />
       )}
-      {source === "fastapi" && isSupabaseConfigured() === false && __DEV__ && (
+      {source === "fastapi" && __DEV__ && (
         <Text style={{ position: "absolute", bottom: 90, alignSelf: "center", color: theme.color.muted, fontSize: 10, fontStyle: "italic" }}>
-          source · FastAPI (Supabase non configuré)
+          source · FastAPI (CMS proxy indisponible)
         </Text>
       )}
     </View>
