@@ -242,9 +242,10 @@ export function PushOptIn({ lang }: { lang: "fr" | "en" }) {
 
 const s = StyleSheet.create({
   banner: {
-    flexDirection: "row", alignItems: "center", gap: 8,
+    flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8,
     backgroundColor: theme.color.surfaceSecondary, borderWidth: 1, borderColor: theme.color.border,
     borderRadius: theme.radius.md, paddingHorizontal: 12, paddingVertical: 10, marginVertical: 8,
+    width: "100%", maxWidth: "100%",
   },
   bannerOk: { borderColor: theme.color.brand },
   bannerTxt: { color: theme.color.onSurfaceSecondary, fontSize: 12 },

@@ -9,9 +9,10 @@
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
-  View, Text, StyleSheet, Pressable, Image,
-  Animated, ActivityIndicator, useWindowDimensions,
+  View, Text, StyleSheet, Pressable, Image, Platform,
+  Animated, Easing, ActivityIndicator, useWindowDimensions,
 } from "react-native";
+import * as ScreenOrientation from "expo-screen-orientation";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, Redirect } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -29,7 +30,48 @@ type Slide = {
   image_url: string;
   duration_ms: number;
   active: boolean;
+  // Optional per-slide style — unset on the original 14 seeded slides, which keep
+  // rendering with the defaults below (no motion, no tint, no font override).
+  background_color?: string;
+  font_family?: string;
+  font_color?: string;
+  effect_type?: "kenburns" | "wave" | "rotate" | "slide" | "fade" | "none";
 };
+
+// ── Per-slide motion effects ─────────────────────────────────────────────────
+// `progress` is an Animated.Value driven linearly from 0 -> 1 over the slide's
+// display duration. Unset / unknown effect_type => no transform (today's look).
+function effectImageStyle(effect: Slide["effect_type"], progress: Animated.Value): any {
+  switch (effect) {
+    case "kenburns":
+      return { transform: [{ scale: progress.interpolate({ inputRange: [0, 1], outputRange: [1.04, 1.14] }) }] };
+    case "wave":
+      return {
+        transform: [
+          { scale: 1.06 },
+          { translateX: progress.interpolate({ inputRange: [0, 0.25, 0.5, 0.75, 1], outputRange: [0, 10, 0, -10, 0] }) },
+        ],
+      };
+    case "rotate":
+      return {
+        transform: [
+          { scale: 1.08 },
+          { rotate: progress.interpolate({ inputRange: [0, 1], outputRange: ["-2deg", "2deg"] }) },
+        ],
+      };
+    case "slide":
+      return {
+        transform: [
+          { scale: 1.15 },
+          { translateX: progress.interpolate({ inputRange: [0, 1], outputRange: [-40, 40] }) },
+        ],
+      };
+    case "fade":
+    case "none":
+    default:
+      return {};
+  }
+}
 
 type KioskSettings = {
   idle_seconds: number;
@@ -67,8 +109,22 @@ function Kiosk() {
   const slideAnim  = useRef(new Animated.Value(24)).current;
   const lineAnim   = useRef(new Animated.Value(0)).current;
   const imgOpacity = useRef(new Animated.Value(1)).current;
+  const effectProgress = useRef(new Animated.Value(0)).current;
+  const effectRun = useRef<Animated.CompositeAnimation | null>(null);
 
   const timer = useRef<any>(null);
+
+  // ── Force landscape while the kiosk screensaver is on screen ────────────────
+  // Requires app.json's top-level "orientation" to be "default" (not "portrait")
+  // — a native manifest lock to portrait overrides any runtime lockAsync call on
+  // Android, so this only takes effect in a build produced after that change.
+  useEffect(() => {
+    if (Platform.OS === "web") return;
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
+    return () => {
+      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+    };
+  }, []);
 
   // ── Fetch slides ─────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -128,6 +184,19 @@ function Kiosk() {
     return () => clearTimeout(timer.current);
   }, [slides, settings]);
 
+  // ── Per-slide motion effect ──────────────────────────────────────────────────
+  // Re-armed every time the visible slide changes, running over that slide's own
+  // display duration. Unset effect_type resolves to no-op (today's static look).
+  useEffect(() => {
+    if (!slides.length) return;
+    effectRun.current?.stop();
+    const dur = slides[index]?.duration_ms || settings?.default_duration_ms || 5000;
+    effectProgress.setValue(0);
+    effectRun.current = Animated.timing(effectProgress, { toValue: 1, duration: dur, easing: Easing.linear, useNativeDriver: true });
+    effectRun.current.start();
+    return () => effectRun.current?.stop();
+  }, [index, slides, settings]);
+
   // ── Loading / error ──────────────────────────────────────────────────────────
   if (loading) return (
     <View style={[s.center, { width, height }]}>
@@ -155,15 +224,30 @@ function Kiosk() {
       style={[s.screen, { width, height }]}
     >
       {/* Background image with cross-fade */}
-      <Animated.View style={[StyleSheet.absoluteFill, { opacity: imgOpacity }]}>
+      <Animated.View style={[StyleSheet.absoluteFill, { opacity: imgOpacity, overflow: "hidden" }]}>
         {cur.image_url ? (
-          <Image
-            source={{ uri: cur.image_url }}
-            style={StyleSheet.absoluteFill}
-            resizeMode={cur.section === "loyalty" ? "contain" : "cover"}
-          />
+          <>
+            {/* Base tone behind the image — shows in the contain-mode letterbox area
+                (loyalty section) and briefly while the image loads. No-op when unset. */}
+            {!!cur.background_color && (
+              <View style={[StyleSheet.absoluteFill, { backgroundColor: cur.background_color }]} />
+            )}
+            <Animated.View style={[StyleSheet.absoluteFill, effectImageStyle(cur.effect_type, effectProgress)]}>
+              <Image
+                source={{ uri: cur.image_url }}
+                style={StyleSheet.absoluteFill}
+                resizeMode={cur.section === "loyalty" ? "contain" : "cover"}
+              />
+            </Animated.View>
+            {/* Subtle color wash tying the photo to the chosen background_color */}
+            {!!cur.background_color && (
+              <View style={[StyleSheet.absoluteFill, { backgroundColor: cur.background_color, opacity: 0.12 }]} />
+            )}
+          </>
+        ) : cur.background_color ? (
+          <View style={[StyleSheet.absoluteFill, { backgroundColor: cur.background_color }]} />
         ) : (
-          // No image — show gradient background with big title
+          // No image, no custom color — default gradient background with big title
           <LinearGradient
             colors={["#0a0804", "#1a1208", "#0a0804"]}
             style={StyleSheet.absoluteFill}
@@ -192,7 +276,12 @@ function Kiosk() {
           </Animated.Text>
 
           {/* Title */}
-          <Animated.Text style={[s.title, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
+          <Animated.Text style={[
+            s.title,
+            !!cur.font_family && { fontFamily: cur.font_family },
+            !!cur.font_color && { color: cur.font_color },
+            { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+          ]}
             numberOfLines={3}
           >
             {cur.title}
@@ -203,7 +292,12 @@ function Kiosk() {
 
           {/* Subtitle */}
           {!!cur.subtitle && (
-            <Animated.Text style={[s.subtitle, { opacity: fadeAnim, transform: [{ translateY: slideAnim }] }]}
+            <Animated.Text style={[
+              s.subtitle,
+              !!cur.font_family && { fontFamily: cur.font_family },
+              !!cur.font_color && { color: cur.font_color },
+              { opacity: fadeAnim, transform: [{ translateY: slideAnim }] },
+            ]}
               numberOfLines={3}
             >
               {cur.subtitle}
@@ -215,8 +309,14 @@ function Kiosk() {
       {/* For loyalty section (promos) — show centered title if no image */}
       {!meta.overlay && !cur.image_url && (
         <View style={s.promoCenter}>
-          <Text style={s.promoTitle}>{cur.title}</Text>
-          {!!cur.subtitle && <Text style={s.promoSub}>{cur.subtitle}</Text>}
+          <Text style={[s.promoTitle, !!cur.font_family && { fontFamily: cur.font_family }, !!cur.font_color && { color: cur.font_color }]}>
+            {cur.title}
+          </Text>
+          {!!cur.subtitle && (
+            <Text style={[s.promoSub, !!cur.font_family && { fontFamily: cur.font_family }, !!cur.font_color && { color: cur.font_color }]}>
+              {cur.subtitle}
+            </Text>
+          )}
         </View>
       )}
 

@@ -9,6 +9,7 @@ import { theme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { isLoyaltyApp } from "@/src/appMode";
 import { api } from "@/src/api";
+import { FlagRibbon } from "@/src/FlagRibbon";
 
 const HERO_URI = "https://customer-assets.emergentagent.com/job_denfert-pizzeria/artifacts/8mhits89_file_00000000dfd471f4be6eb9f4ebd8e6bf.png";
 const RESTAURANT = "https://images.pexels.com/photos/4997894/pexels-photo-4997894.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=900&w=1200";
@@ -82,8 +83,14 @@ function Home() {
               </Pressable>
             </View>
             <Pressable testID="hero-menu-btn" onPress={() => router.push("/(tabs)/menu")} style={styles.heroCenter}>
-              <Text style={styles.heroTitle}>Pizza</Text>
-              <Text style={[styles.heroTitle, { marginTop: -4 }]}>Denfert</Text>
+              <View style={styles.titleRow}>
+                <FlagRibbon flag="fr" side="left" />
+                <View>
+                  <Text style={styles.heroTitle}>Pizza</Text>
+                  <Text style={[styles.heroTitle, { marginTop: -4 }]}>Denfert</Text>
+                </View>
+                <FlagRibbon flag="it" side="right" />
+              </View>
               <Text style={styles.heroTag}>{t("tagline")}</Text>
               <View style={styles.dividerRow}>
                 <View style={styles.dividerLine} />
@@ -147,6 +154,7 @@ const styles = StyleSheet.create({
   langBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, height: 36, borderRadius: 999, borderWidth: 1, borderColor: "rgba(212,175,55,0.55)", backgroundColor: "rgba(0,0,0,0.5)", marginTop: 16 },
   langTxt: { color: theme.color.brand, fontSize: 12, fontWeight: "700", letterSpacing: 1 },
   heroCenter: { alignItems: "center", paddingHorizontal: theme.space.md, marginTop: 8 },
+  titleRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
   heroTitle: { color: "#F5F1E8", fontSize: 42, lineHeight: 48, fontWeight: "500", letterSpacing: 0.4, textAlign: "center", fontFamily: Platform.select({ ios: "PlayfairDisplay_500Medium", android: "PlayfairDisplay_500Medium", default: "'Playfair Display', Georgia, 'Times New Roman', serif" }) },
   heroTag: { color: theme.color.brand, fontSize: 22, marginTop: 14, textAlign: "center", letterSpacing: 0.3, fontFamily: Platform.select({ ios: "DancingScript_600SemiBold", android: "DancingScript_600SemiBold", default: "'Dancing Script', 'Snell Roundhand', cursive" }) },
   dividerRow: { flexDirection: "row", alignItems: "center", marginTop: 18, paddingHorizontal: theme.space.md, gap: 14 },
