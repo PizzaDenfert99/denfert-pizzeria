@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, Image as RNImage, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -9,9 +9,9 @@ import { theme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { isLoyaltyApp } from "@/src/appMode";
 import { api } from "@/src/api";
-import { FlagRibbon } from "@/src/FlagRibbon";
 
-const HERO_URI = "https://customer-assets.emergentagent.com/job_denfert-pizzeria/artifacts/8mhits89_file_00000000dfd471f4be6eb9f4ebd8e6bf.png";
+// Baked-in hero: title text + FR/IT flag ribbons are already part of this image.
+const HERO_SOURCE = require("../../assets/images/photo_2026-07-09_02-09-51.jpg");
 const RESTAURANT = "https://images.pexels.com/photos/4997894/pexels-photo-4997894.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=900&w=1200";
 
 export default function HomeRoute() {
@@ -67,12 +67,7 @@ function Home() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 140 }}>
         {/* HERO */}
         <View style={styles.hero}>
-          {Platform.OS === "web" ? (
-            // @ts-ignore - native web img tag
-            <img src={HERO_URI} style={{ position: "absolute", top: 0, left: 0, width: "100%", height: "100%", objectFit: "cover", transform: "scale(0.96)" }} alt="Pizza Denfert" />
-          ) : (
-            <RNImage source={{ uri: HERO_URI }} style={[StyleSheet.absoluteFillObject as any, { transform: [{ scale: 0.96 }] }]} resizeMode="cover" />
-          )}
+          <Image source={HERO_SOURCE} style={StyleSheet.absoluteFillObject} contentFit="cover" />
           <LinearGradient colors={["rgba(5,5,5,0.65)", "rgba(5,5,5,0.45)", "rgba(5,5,5,0.18)", "rgba(5,5,5,0.0)"]} locations={[0, 0.35, 0.6, 1]} style={StyleSheet.absoluteFillObject} />
           <SafeAreaView edges={["top"]} style={{ flex: 1, paddingHorizontal: theme.space.lg, paddingTop: theme.space.md }}>
             <View style={styles.headerRow}>
@@ -82,22 +77,7 @@ function Home() {
                 <Text style={styles.langTxt}>{lang.toUpperCase()}</Text>
               </Pressable>
             </View>
-            <Pressable testID="hero-menu-btn" onPress={() => router.push("/(tabs)/menu")} style={styles.heroCenter}>
-              <View style={styles.titleRow}>
-                <FlagRibbon flag="fr" side="left" />
-                <View>
-                  <Text style={styles.heroTitle}>Pizza</Text>
-                  <Text style={[styles.heroTitle, { marginTop: -4 }]}>Denfert</Text>
-                </View>
-                <FlagRibbon flag="it" side="right" />
-              </View>
-              <Text style={styles.heroTag}>{t("tagline")}</Text>
-              <View style={styles.dividerRow}>
-                <View style={styles.dividerLine} />
-                <Text style={styles.lyon}>LYON · 4ᵉ ARRONDISSEMENT</Text>
-                <View style={styles.dividerLine} />
-              </View>
-            </Pressable>
+            <Pressable testID="hero-menu-btn" onPress={() => router.push("/(tabs)/menu")} style={styles.heroCenter} />
           </SafeAreaView>
         </View>
 
@@ -153,13 +133,7 @@ const styles = StyleSheet.create({
   brandLogo: { width: 260, height: 260, marginBottom: -6 },
   langBtn: { flexDirection: "row", alignItems: "center", gap: 6, paddingHorizontal: 14, height: 36, borderRadius: 999, borderWidth: 1, borderColor: "rgba(212,175,55,0.55)", backgroundColor: "rgba(0,0,0,0.5)", marginTop: 16 },
   langTxt: { color: theme.color.brand, fontSize: 12, fontWeight: "700", letterSpacing: 1 },
-  heroCenter: { alignItems: "center", paddingHorizontal: theme.space.md, marginTop: 8 },
-  titleRow: { flexDirection: "row", alignItems: "center", justifyContent: "center", gap: 10 },
-  heroTitle: { color: "#F5F1E8", fontSize: 42, lineHeight: 48, fontWeight: "500", letterSpacing: 0.4, textAlign: "center", fontFamily: Platform.select({ ios: "PlayfairDisplay_500Medium", android: "PlayfairDisplay_500Medium", default: "'Playfair Display', Georgia, 'Times New Roman', serif" }) },
-  heroTag: { color: theme.color.brand, fontSize: 22, marginTop: 14, textAlign: "center", letterSpacing: 0.3, fontFamily: Platform.select({ ios: "DancingScript_600SemiBold", android: "DancingScript_600SemiBold", default: "'Dancing Script', 'Snell Roundhand', cursive" }) },
-  dividerRow: { flexDirection: "row", alignItems: "center", marginTop: 18, paddingHorizontal: theme.space.md, gap: 14 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: theme.color.brand, opacity: 0.7 },
-  lyon: { color: theme.color.brand, letterSpacing: 3, fontSize: 12, fontWeight: "700" },
+  heroCenter: { flex: 1, alignItems: "center", paddingHorizontal: theme.space.md, marginTop: 8 },
   cta: { flexDirection: "row", gap: 10, paddingHorizontal: 28, height: 52, borderRadius: theme.radius.md, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
   ctaTxt: { color: theme.color.onBrandPrimary, fontWeight: "700", letterSpacing: 1, fontSize: 13 },
   ctaGhost: { flexDirection: "row", gap: 8, alignSelf: "flex-start", paddingHorizontal: 20, height: 48, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.brand, alignItems: "center", marginTop: theme.space.xl },

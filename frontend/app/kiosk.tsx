@@ -9,10 +9,9 @@
 
 import React, { useEffect, useRef, useState, useCallback } from "react";
 import {
-  View, Text, StyleSheet, Pressable, Image, Platform,
+  View, Text, StyleSheet, Pressable, Image,
   Animated, Easing, ActivityIndicator, useWindowDimensions,
 } from "react-native";
-import * as ScreenOrientation from "expo-screen-orientation";
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, Redirect } from "expo-router";
 import { Feather } from "@expo/vector-icons";
@@ -113,18 +112,6 @@ function Kiosk() {
   const effectRun = useRef<Animated.CompositeAnimation | null>(null);
 
   const timer = useRef<any>(null);
-
-  // ── Force landscape while the kiosk screensaver is on screen ────────────────
-  // Requires app.json's top-level "orientation" to be "default" (not "portrait")
-  // — a native manifest lock to portrait overrides any runtime lockAsync call on
-  // Android, so this only takes effect in a build produced after that change.
-  useEffect(() => {
-    if (Platform.OS === "web") return;
-    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
-    return () => {
-      ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
-    };
-  }, []);
 
   // ── Fetch slides ─────────────────────────────────────────────────────────────
   useEffect(() => {

@@ -2,7 +2,6 @@ import { Stack } from "expo-router";
 import * as SplashScreen from "expo-splash-screen";
 import { useEffect } from "react";
 import { Platform } from "react-native";
-import * as ScreenOrientation from "expo-screen-orientation";
 import { StatusBar } from "expo-status-bar";
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
@@ -46,16 +45,6 @@ export default function RootLayout() {
   useEffect(() => {
     if (loaded || error) SplashScreen.hideAsync();
   }, [loaded, error]);
-
-  // App.json's "orientation" is now "default" (native manifest no longer
-  // force-locks portrait) so that kiosk.tsx can rotate to landscape. Lock
-  // portrait here at the root instead, so every OTHER screen still behaves
-  // like before; kiosk.tsx temporarily overrides this to LANDSCAPE while
-  // mounted and restores PORTRAIT_UP on unmount.
-  useEffect(() => {
-    if (Platform.OS === "web") return;
-    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
-  }, []);
 
   if (!loaded && !error) return null;
 
