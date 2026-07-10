@@ -1914,7 +1914,7 @@ async def public_restaurant_settings():
         r = await cli.get(
             f"{SUPABASE_URL}/rest/v1/restaurant_settings",
             headers=headers,
-            params={"select": "opening_hours,phone,address,updated_at", "limit": "1"},
+            params={"select": "opening_hours,phone,address,hero_image_url,updated_at", "limit": "1"},
         )
     if r.status_code >= 400:
         raise HTTPException(502, f"Supabase restaurant_settings fetch failed: {r.status_code} {r.text[:300]}")
@@ -1974,6 +1974,7 @@ class CmsSettingsUpdate(BaseModel):
     opening_hours: Optional[dict] = None
     phone: Optional[str] = None
     address: Optional[str] = None
+    hero_image_url: Optional[str] = None
 
 
 async def _sb_rest(method: str, path: str, **kwargs) -> httpx.Response:

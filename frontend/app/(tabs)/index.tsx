@@ -28,20 +28,22 @@ export default function HomeRoute() {
 function Home() {
   const { t, lang, setLang } = useI18n();
   const router = useRouter();
-  const [dynSettings, setDynSettings] = useState<{ phone?: string | null; address?: string | null } | null>(null);
+  const [dynSettings, setDynSettings] = useState<{ phone?: string | null; address?: string | null; hero_image_url?: string | null } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const s = await api.publicRestaurantSettings();
-        if (!cancelled && s) setDynSettings({ phone: s.phone, address: s.address });
+        if (!cancelled && s) setDynSettings({ phone: s.phone, address: s.address, hero_image_url: s.hero_image_url });
       } catch {
-        // silent — fall back to hardcoded address below.
+        // silent — fall back to hardcoded address/hero below.
       }
     })();
     return () => { cancelled = true; };
   }, []);
+
+  const heroSource = dynSettings?.hero_image_url ? { uri: dynSettings.hero_image_url } : HERO_SOURCE;
 
   // Split a free-form address into two display lines (street vs city/postcode).
   const addressLines = (() => {
@@ -67,8 +69,7 @@ function Home() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 140 }}>
         {/* HERO */}
         <View style={styles.hero}>
-          <Image source={HERO_SOURCE} style={StyleSheet.absoluteFillObject} contentFit="cover" />
-          <LinearGradient colors={["rgba(5,5,5,0.65)", "rgba(5,5,5,0.45)", "rgba(5,5,5,0.18)", "rgba(5,5,5,0.0)"]} locations={[0, 0.35, 0.6, 1]} style={StyleSheet.absoluteFillObject} />
+          <Image source={heroSource} style={StyleSheet.absoluteFillObject} contentFit="cover" />
           <SafeAreaView edges={["top"]} style={{ flex: 1, paddingHorizontal: theme.space.lg, paddingTop: theme.space.md }}>
             <View style={styles.headerRow}>
               <View style={{ width: 1 }} />

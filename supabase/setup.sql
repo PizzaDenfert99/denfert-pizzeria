@@ -102,8 +102,10 @@ create table if not exists public.restaurant_settings (
   opening_hours jsonb not null default '{}'::jsonb,
   phone text,
   address text,
+  hero_image_url text,
   updated_at timestamptz not null default now()
 );
+alter table public.restaurant_settings add column if not exists hero_image_url text;
 drop trigger if exists set_updated_at on public.restaurant_settings;
 create trigger set_updated_at before update on public.restaurant_settings
   for each row execute function public.set_updated_at();
