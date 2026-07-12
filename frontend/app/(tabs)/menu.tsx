@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { View, Text, StyleSheet, ScrollView, ActivityIndicator, FlatList, Pressable, RefreshControl, AppState } from "react-native";
+import { Animated, View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressable, RefreshControl, AppState } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
 import { Image } from "expo-image";
@@ -7,6 +7,8 @@ import { useI18n } from "@/src/i18n";
 import { api } from "@/src/api";
 import { theme } from "@/src/theme";
 import type { Category, MenuItem } from "@/src/lib/supabase";
+import { ParallaxBackground } from "@/src/ParallaxBackground";
+import { useBackgroundImage } from "@/src/hooks/use-background-image";
 
 // Unified shape used by the renderer (works for both CMS-proxy and legacy FastAPI rows).
 type Row = {
@@ -33,6 +35,8 @@ const LEGACY_FALLBACK_CATS = [
 
 export default function MenuScreen() {
   const { t, lang } = useI18n();
+  const bgUrl = useBackgroundImage("bg_menu_url");
+  const scrollY = useRef(new Animated.Value(0)).current;
   const [rows, setRows] = useState<Row[]>([]);
   const [cats, setCats] = useState<{ id: string; slug: string; name: string; sort_order: number }[]>(LEGACY_FALLBACK_CATS);
   const [cat, setCat] = useState<string>("pizzas");
@@ -157,7 +161,8 @@ export default function MenuScreen() {
   };
 
   return (
-    <View testID="menu-screen" style={styles.container}>
+    <View testID="menu-screen" style={[styles.container, bgUrl ? { backgroundColor: "transparent" } : null]}>
+      {!!bgUrl && <ParallaxBackground imageUrl={bgUrl} scrollY={scrollY} />}
       <SafeAreaView edges={["top"]} style={styles.header}>
         <Text style={styles.eyebrow}>— LA CARTE</Text>
         <Text style={styles.title}>{t("menu")}</Text>
@@ -186,12 +191,14 @@ export default function MenuScreen() {
           </Text>
         </View>
       ) : (
-        <FlatList
+        <Animated.FlatList
           data={filtered}
-          keyExtractor={(i) => i.id}
+          keyExtractor={(i: Row) => i.id}
           contentContainerStyle={{ padding: theme.space.lg, paddingBottom: 140, paddingTop: theme.space.md }}
           refreshControl={<RefreshControl refreshing={refreshing} tintColor={theme.color.brand} onRefresh={async () => { setRefreshing(true); await load(false); setRefreshing(false); }} />}
-          renderItem={({ item }) => {
+          onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
+          scrollEventThrottle={16}
+          renderItem={({ item }: { item: Row }) => {
             const sizeKeys = item.prices ? Object.keys(item.prices).filter((k) => k !== "default") : [];
             const showSizes = sizeKeys.length >= 2;
             return (
@@ -241,7 +248,7 @@ export default function MenuScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.color.surface },
+  container: { flex: 1, backgroundColor: theme.color.surface, overflow: "hidden" },
   header: { paddingHorizontal: theme.space.xl, paddingTop: theme.space.md, paddingBottom: theme.space.sm, borderBottomWidth: 0.5, borderBottomColor: theme.color.border, backgroundColor: theme.color.surface },
   eyebrow: { color: theme.color.brand, letterSpacing: 3, fontSize: 10, fontWeight: "700", marginBottom: 6 },
   title: { color: theme.color.onSurface, fontSize: 34, fontWeight: "300", letterSpacing: -1 },

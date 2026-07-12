@@ -1,5 +1,5 @@
-import React, { useEffect, useState, useCallback } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Platform, KeyboardAvoidingView, RefreshControl, AppState } from "react-native";
+import React, { useEffect, useState, useCallback, useRef } from "react";
+import { Animated, View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Platform, KeyboardAvoidingView, RefreshControl, AppState } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -14,6 +14,8 @@ import { api, setToken } from "@/src/api";
 import { theme } from "@/src/theme";
 import { PushOptIn } from "@/src/PushOptIn";
 import { isLoyaltyApp } from "@/src/appMode";
+import { ParallaxBackground } from "@/src/ParallaxBackground";
+import { useBackgroundImage } from "@/src/hooks/use-background-image";
 
 // Discreet lock icon only shown on the loyalty-tablet APK when the user is
 // already signed in. The unauthenticated /account view already exposes a
@@ -55,6 +57,8 @@ export default function Account() {
   const { user, loading, signInGoogleSession, signOut, refresh } = useAuth();
   const { t, lang, setLang } = useI18n();
   const router = useRouter();
+  const bgUrl = useBackgroundImage("bg_account_url");
+  const scrollY = useRef(new Animated.Value(0)).current;
 
   // Phone OTP state
   const [phone, setPhone] = useState("");
@@ -268,11 +272,14 @@ export default function Account() {
   ];
 
   return (
-    <View testID="account-screen" style={styles.container}>
-      <ScrollView
+    <View testID="account-screen" style={[styles.container, bgUrl ? { backgroundColor: "transparent" } : null]}>
+      {!!bgUrl && <ParallaxBackground imageUrl={bgUrl} scrollY={scrollY} />}
+      <Animated.ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 140 }}
         refreshControl={<RefreshControl refreshing={refreshing} tintColor={theme.color.brand} onRefresh={async () => { setRefreshing(true); await load(); setRefreshing(false); }} />}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
+        scrollEventThrottle={16}
       >
         <SafeAreaView edges={["top"]} style={{ padding: theme.space.xl }}>
           <View style={styles.headerRow}>
@@ -399,13 +406,13 @@ export default function Account() {
             <Text style={styles.logoutTxt}>{t("logout")}</Text>
           </Pressable>
         </SafeAreaView>
-      </ScrollView>
+      </Animated.ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.color.surface },
+  container: { flex: 1, backgroundColor: theme.color.surface, overflow: "hidden" },
   eyebrow: { color: theme.color.brand, letterSpacing: 3, fontSize: 10, fontWeight: "700", marginBottom: 6 },
   bigTitle: { color: theme.color.onSurface, fontSize: 44, fontWeight: "300", letterSpacing: -1, lineHeight: 46 },
   subTxt: { color: theme.color.onSurfaceTertiary, fontSize: 14, marginTop: theme.space.md, fontStyle: "italic" },

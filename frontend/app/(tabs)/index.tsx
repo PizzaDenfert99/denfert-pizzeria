@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable } from "react-native";
+import React, { useEffect, useRef, useState } from "react";
+import { Animated, View, Text, StyleSheet, Pressable } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -10,6 +10,7 @@ import { useI18n } from "@/src/i18n";
 import { isLoyaltyApp } from "@/src/appMode";
 import { api } from "@/src/api";
 import { storage } from "@/src/utils/storage";
+import { ParallaxBackground } from "@/src/ParallaxBackground";
 
 // Baked-in hero: title text + FR/IT flag ribbons are already part of this image.
 const HERO_SOURCE = require("../../assets/images/photo_2026-07-09_02-09-51.jpg");
@@ -35,7 +36,8 @@ export default function HomeRoute() {
 function Home() {
   const { t, lang, setLang } = useI18n();
   const router = useRouter();
-  const [dynSettings, setDynSettings] = useState<{ phone?: string | null; address?: string | null; hero_image_url?: string | null } | null>(null);
+  const [dynSettings, setDynSettings] = useState<{ phone?: string | null; address?: string | null; hero_image_url?: string | null; bg_home_url?: string | null } | null>(null);
+  const scrollY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     let cancelled = false;
@@ -51,7 +53,7 @@ function Home() {
       try {
         const s = await api.publicRestaurantSettings();
         if (!cancelled && s) {
-          setDynSettings({ phone: s.phone, address: s.address, hero_image_url: s.hero_image_url });
+          setDynSettings({ phone: s.phone, address: s.address, hero_image_url: s.hero_image_url, bg_home_url: s.bg_home_url });
           if (s.hero_image_url) storage.setItem(HERO_CACHE_KEY, s.hero_image_url);
         }
       } catch {
@@ -83,9 +85,20 @@ function Home() {
   ] as const;
 
   return (
-    <View testID="home-screen" style={styles.container}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 140 }}>
-        {/* HERO */}
+    <View testID="home-screen" style={[styles.container, dynSettings?.bg_home_url ? { backgroundColor: "transparent" } : null]}>
+      {/* Screen-fixed parallax layer, behind the ScrollView. The hero block
+          below fully occludes it, so it only ever becomes visible starting
+          where the hero ends — "below the hero", with no extra offset math
+          needed since this shifts by a fraction of the same scroll position. */}
+      {!!dynSettings?.bg_home_url && <ParallaxBackground imageUrl={dynSettings.bg_home_url} scrollY={scrollY} />}
+      <Animated.ScrollView
+        showsVerticalScrollIndicator={false}
+        contentContainerStyle={{ paddingBottom: 140 }}
+        onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
+        scrollEventThrottle={16}
+      >
+        {/* HERO — the admin-configurable background (below) never shows through
+            here; the hero's own opaque photo/backdrop fully covers this block. */}
         <View style={styles.hero}>
           {dynSettings?.hero_image_url ? (
             // Admin-uploaded hero: never crop the actual photo. A blurred,
@@ -161,13 +174,13 @@ function Home() {
             </View>
           </View>
         </View>
-      </ScrollView>
+      </Animated.ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.color.surface },
+  container: { flex: 1, backgroundColor: theme.color.surface, overflow: "hidden" },
   hero: { width: "100%", height: 820 },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   cornerLogo: { width: 175, height: 175, marginTop: -8, marginLeft: -8 },

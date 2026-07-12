@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
+import React, { useState, useEffect, useRef } from "react";
+import { Animated, View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -9,6 +9,8 @@ import { api } from "@/src/api";
 import { useAuth } from "@/src/auth-context";
 import { useI18n } from "@/src/i18n";
 import { theme } from "@/src/theme";
+import { ParallaxBackground } from "@/src/ParallaxBackground";
+import { useBackgroundImage } from "@/src/hooks/use-background-image";
 
 const INTERIOR = "https://images.pexels.com/photos/4997894/pexels-photo-4997894.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=900&w=1200";
 
@@ -33,6 +35,8 @@ export default function Reserve() {
   const { t, lang } = useI18n();
   const router = useRouter();
   const { user } = useAuth();
+  const bgUrl = useBackgroundImage("bg_reservations_url");
+  const scrollY = useRef(new Animated.Value(0)).current;
   const [date, setDate] = useState(nextDays(14)[0].iso);
   const [time, setTime] = useState("20:00");
   const [guests, setGuests] = useState(2);
@@ -165,9 +169,16 @@ export default function Reserve() {
   };
 
   return (
-    <View testID="reserve-screen" style={styles.container}>
+    <View testID="reserve-screen" style={[styles.container, bgUrl ? { backgroundColor: "transparent" } : null]}>
+      {!!bgUrl && <ParallaxBackground imageUrl={bgUrl} scrollY={scrollY} />}
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
-        <ScrollView keyboardShouldPersistTaps="handled" showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 160 }}>
+        <Animated.ScrollView
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 160 }}
+          onScroll={Animated.event([{ nativeEvent: { contentOffset: { y: scrollY } } }], { useNativeDriver: true })}
+          scrollEventThrottle={16}
+        >
           <View style={styles.hero}>
             <Image source={INTERIOR} style={StyleSheet.absoluteFillObject} contentFit="cover" />
             <LinearGradient colors={["rgba(5,5,5,0.35)", "rgba(5,5,5,0.95)"]} style={StyleSheet.absoluteFillObject} />
@@ -238,14 +249,14 @@ export default function Reserve() {
               )}
             </Pressable>
           </View>
-        </ScrollView>
+        </Animated.ScrollView>
       </KeyboardAvoidingView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: theme.color.surface },
+  container: { flex: 1, backgroundColor: theme.color.surface, overflow: "hidden" },
   hero: { height: 240 },
   eyebrow: { color: theme.color.brand, letterSpacing: 3, fontSize: 11, fontWeight: "700", marginBottom: 8 },
   heroTitle: { color: theme.color.onSurface, fontSize: 40, fontWeight: "300", letterSpacing: -1 },

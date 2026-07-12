@@ -204,6 +204,12 @@ class AdminPizzaInExt(BaseModel):
 
 # ---- Kiosk / Advertising Management ----
 AD_SECTIONS = ("loyalty", "experience", "ingredients")
+# Per-slide style customization: kept optional everywhere so the 14 pre-existing
+# slides (created before this feature) keep rendering with kiosk.tsx's built-in
+# defaults — they simply have none of these fields set.
+AD_EFFECTS = ("kenburns", "wave", "rotate", "slide", "fade", "none")
+AD_FONTS = ("System", "PlayfairDisplay_600SemiBold", "DancingScript_600SemiBold")
+_HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
 class AdSlideIn(BaseModel):
@@ -214,6 +220,10 @@ class AdSlideIn(BaseModel):
     image_url: Optional[str] = ""
     duration_ms: int = 5000
     active: bool = True
+    background_color: Optional[str] = None  # hex, e.g. "#1a1a1a"
+    font_family: Optional[str] = None        # one of AD_FONTS
+    font_color: Optional[str] = None         # hex, e.g. "#ffffff"
+    effect_type: Optional[str] = None        # one of AD_EFFECTS
 
 
 class AdSlideUpdateIn(BaseModel):
@@ -224,6 +234,23 @@ class AdSlideUpdateIn(BaseModel):
     image_url: Optional[str] = None
     duration_ms: Optional[int] = None
     active: Optional[bool] = None
+    background_color: Optional[str] = None
+    font_family: Optional[str] = None
+    font_color: Optional[str] = None
+    effect_type: Optional[str] = None
+
+
+def _validate_slide_style(background_color: Optional[str], font_family: Optional[str],
+                           font_color: Optional[str], effect_type: Optional[str]) -> None:
+    """Empty string means 'clear override, fall back to default' — only non-empty values are validated."""
+    if background_color and not _HEX_COLOR_RE.match(background_color):
+        raise HTTPException(400, "background_color must be a hex color like #1a1a1a")
+    if font_color and not _HEX_COLOR_RE.match(font_color):
+        raise HTTPException(400, "font_color must be a hex color like #ffffff")
+    if font_family and font_family not in AD_FONTS:
+        raise HTTPException(400, f"Invalid font_family. Allowed: {', '.join(AD_FONTS)}")
+    if effect_type and effect_type not in AD_EFFECTS:
+        raise HTTPException(400, f"Invalid effect_type. Allowed: {', '.join(AD_EFFECTS)}")
 
 
 class AdReorderIn(BaseModel):
@@ -1757,6 +1784,7 @@ async def admin_create_slide(b: AdSlideIn, authorization: Optional[str] = Header
         raise HTTPException(400, f"Invalid section. Allowed: {', '.join(AD_SECTIONS)}")
     if b.duration_ms < 500 or b.duration_ms > 60000:
         raise HTTPException(400, "duration_ms must be between 500 and 60000")
+    _validate_slide_style(b.background_color, b.font_family, b.font_color, b.effect_type)
     order = b.order
     if order is None:
         # Append: max order in section + 1
@@ -1771,6 +1799,10 @@ async def admin_create_slide(b: AdSlideIn, authorization: Optional[str] = Header
         "created_at": now(), "updated_at": now(),
         "created_by": me.get("user_id"),
     }
+    if b.background_color is not None: doc["background_color"] = b.background_color
+    if b.font_family is not None: doc["font_family"] = b.font_family
+    if b.font_color is not None: doc["font_color"] = b.font_color
+    if b.effect_type is not None: doc["effect_type"] = b.effect_type
     await db.ad_slides.insert_one(dict(doc))
     return _serialise_slide(doc)
 
@@ -1792,6 +1824,11 @@ async def admin_update_slide(sid: str, b: AdSlideUpdateIn, authorization: Option
             raise HTTPException(400, "duration_ms must be between 500 and 60000")
         update["duration_ms"] = int(b.duration_ms)
     if b.active is not None: update["active"] = bool(b.active)
+    _validate_slide_style(b.background_color, b.font_family, b.font_color, b.effect_type)
+    if b.background_color is not None: update["background_color"] = b.background_color
+    if b.font_family is not None: update["font_family"] = b.font_family
+    if b.font_color is not None: update["font_color"] = b.font_color
+    if b.effect_type is not None: update["effect_type"] = b.effect_type
     r = await db.ad_slides.update_one({"id": sid}, {"$set": update})
     if r.matched_count == 0:
         raise HTTPException(404, "Slide not found")
@@ -1914,7 +1951,7 @@ async def public_restaurant_settings():
         r = await cli.get(
             f"{SUPABASE_URL}/rest/v1/restaurant_settings",
             headers=headers,
-            params={"select": "opening_hours,phone,address,hero_image_url,updated_at", "limit": "1"},
+            params={"select": "opening_hours,phone,address,hero_image_url,bg_home_url,bg_reservations_url,bg_account_url,bg_menu_url,updated_at", "limit": "1"},
         )
     if r.status_code >= 400:
         raise HTTPException(502, f"Supabase restaurant_settings fetch failed: {r.status_code} {r.text[:300]}")
@@ -1975,6 +2012,11 @@ class CmsSettingsUpdate(BaseModel):
     phone: Optional[str] = None
     address: Optional[str] = None
     hero_image_url: Optional[str] = None
+    # Per-screen decorative backgrounds (customer app) — independent of hero_image_url.
+    bg_home_url: Optional[str] = None
+    bg_reservations_url: Optional[str] = None
+    bg_account_url: Optional[str] = None
+    bg_menu_url: Optional[str] = None
 
 
 async def _sb_rest(method: str, path: str, **kwargs) -> httpx.Response:
