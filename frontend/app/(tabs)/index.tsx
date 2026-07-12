@@ -9,10 +9,17 @@ import { theme } from "@/src/theme";
 import { useI18n } from "@/src/i18n";
 import { isLoyaltyApp } from "@/src/appMode";
 import { api } from "@/src/api";
+import { storage } from "@/src/utils/storage";
 
 // Baked-in hero: title text + FR/IT flag ribbons are already part of this image.
 const HERO_SOURCE = require("../../assets/images/photo_2026-07-09_02-09-51.jpg");
 const RESTAURANT = "https://images.pexels.com/photos/4997894/pexels-photo-4997894.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=900&w=1200";
+// Last hero_image_url we successfully rendered — read back on the NEXT app
+// open so the correct photo shows immediately instead of flashing the
+// baked-in default while the settings request round-trips. expo-image keeps
+// its own on-disk cache of the actual bytes, so once we know the URL again
+// it typically renders instantly with no network wait either.
+const HERO_CACHE_KEY = "@last_hero_image_url";
 
 export default function HomeRoute() {
   // Loyalty APK / loyalty subdomain — the customer landing screen does not
@@ -33,11 +40,22 @@ function Home() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      // 1. Show the last-known hero immediately (fast local read, no network) so
+      //    repeat app opens never flash the baked-in default first.
+      const cachedHero = await storage.getItem<string>(HERO_CACHE_KEY, "");
+      if (!cancelled && cachedHero) {
+        setDynSettings((prev) => prev ?? { hero_image_url: cachedHero });
+      }
+      // 2. Fetch the live settings; update the screen (and the cache for next
+      //    time) if the hero has actually changed since the cached value.
       try {
         const s = await api.publicRestaurantSettings();
-        if (!cancelled && s) setDynSettings({ phone: s.phone, address: s.address, hero_image_url: s.hero_image_url });
+        if (!cancelled && s) {
+          setDynSettings({ phone: s.phone, address: s.address, hero_image_url: s.hero_image_url });
+          if (s.hero_image_url) storage.setItem(HERO_CACHE_KEY, s.hero_image_url);
+        }
       } catch {
-        // silent — fall back to hardcoded address/hero below.
+        // silent — fall back to whatever we already have (cached or default hero).
       }
     })();
     return () => { cancelled = true; };
