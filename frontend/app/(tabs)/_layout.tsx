@@ -27,13 +27,6 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        // The parallax background layers use native-driven Animated
-        // transforms (translateY tied to scroll). react-native-screens can
-        // freeze/detach an inactive tab's native view for performance, and
-        // re-attaching it on return has been a known source of a visible
-        // flash/flicker for native-driven transforms specifically. These
-        // screens are cheap enough that keeping them warm is worth it.
-        freezeOnBlur: false,
         tabBarActiveTintColor: theme.color.brand,
         tabBarInactiveTintColor: "#857F70",
         tabBarLabelStyle: { fontSize: 11, fontWeight: "600", letterSpacing: 1, marginBottom: 4 },

@@ -115,19 +115,15 @@ function Home() {
       {/* Screen-fixed parallax layer, behind the ScrollView. The hero block
           below fully occludes it, so it only ever becomes visible starting
           where the hero ends — "below the hero", with no extra offset math
-          needed since this shifts by a fraction of the same scroll position.
-          Clipped to stop short of the floating tab bar (bottom: 140, matching
-          this screen's own contentContainerStyle paddingBottom) — otherwise
-          this dark layer extends underneath the tab bar's translucent/blurred
-          background and visibly dims/fades it. */}
+          needed since this shifts by a fraction of the same scroll position. */}
       {!!dynSettings?.bg_home_url && (
-        <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { bottom: 140, overflow: "hidden" }]}>
+        <>
           <ParallaxBackground imageUrl={dynSettings.bg_home_url} scrollY={scrollY} />
           {/* The raw photo read as inconsistent against the otherwise pure-black
               UI (e.g. the flat VISITEZ-NOUS card right below it) — same flat
               scrim strength used on the Reserve screen's background. */}
-          <View style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(5,5,5,0.6)" }]} />
-        </View>
+          <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(5,5,5,0.6)" }]} />
+        </>
       )}
       <Animated.ScrollView
         showsVerticalScrollIndicator={false}

@@ -273,15 +273,7 @@ export default function Account() {
 
   return (
     <View testID="account-screen" style={[styles.container, bgUrl ? { backgroundColor: "transparent" } : null]}>
-      {/* Clipped to stop short of the floating tab bar (bottom: 140, matching
-          this screen's own contentContainerStyle paddingBottom) — otherwise
-          this layer extends underneath the tab bar's translucent/blurred
-          background and visibly dims/fades it. */}
-      {!!bgUrl && (
-        <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { bottom: 140, overflow: "hidden" }]}>
-          <ParallaxBackground imageUrl={bgUrl} scrollY={scrollY} />
-        </View>
-      )}
+      {!!bgUrl && <ParallaxBackground imageUrl={bgUrl} scrollY={scrollY} />}
       <Animated.ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 140 }}
