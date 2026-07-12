@@ -20,6 +20,10 @@ const HERO_SOURCE = require("../../assets/images/photo_2026-07-09_02-09-51.jpg")
 // its own on-disk cache of the actual bytes, so once we know the URL again
 // it typically renders instantly with no network wait either.
 const HERO_CACHE_KEY = "@last_hero_image_url";
+// Same idea for the below-hero parallax background: without it, the screen
+// briefly renders the plain flat surface color (no image yet) before the
+// settings fetch resolves and the image+scrim appear — a visible flash.
+const BG_HOME_CACHE_KEY = "@last_bg_home_url";
 
 export default function HomeRoute() {
   // Loyalty APK / loyalty subdomain — the customer landing screen does not
@@ -41,19 +45,24 @@ function Home() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // 1. Show the last-known hero immediately (fast local read, no network) so
-      //    repeat app opens never flash the baked-in default first.
-      const cachedHero = await storage.getItem<string>(HERO_CACHE_KEY, "");
-      if (!cancelled && cachedHero) {
-        setDynSettings((prev) => prev ?? { hero_image_url: cachedHero });
+      // 1. Show the last-known hero + background immediately (fast local read,
+      //    no network) so repeat app opens never flash the baked-in default
+      //    hero, or the plain flat background, before the fetch resolves.
+      const [cachedHero, cachedBgHome] = await Promise.all([
+        storage.getItem<string>(HERO_CACHE_KEY, ""),
+        storage.getItem<string>(BG_HOME_CACHE_KEY, ""),
+      ]);
+      if (!cancelled && (cachedHero || cachedBgHome)) {
+        setDynSettings((prev) => prev ?? { hero_image_url: cachedHero || undefined, bg_home_url: cachedBgHome || undefined });
       }
-      // 2. Fetch the live settings; update the screen (and the cache for next
-      //    time) if the hero has actually changed since the cached value.
+      // 2. Fetch the live settings; update the screen (and the caches for next
+      //    time) if either has actually changed since the cached values.
       try {
         const s = await api.publicRestaurantSettings();
         if (!cancelled && s) {
           setDynSettings({ phone: s.phone, address: s.address, hero_image_url: s.hero_image_url, bg_home_url: s.bg_home_url });
           if (s.hero_image_url) storage.setItem(HERO_CACHE_KEY, s.hero_image_url);
+          if (s.bg_home_url) storage.setItem(BG_HOME_CACHE_KEY, s.bg_home_url);
         }
       } catch {
         // silent — fall back to whatever we already have (cached or default hero).
@@ -89,7 +98,15 @@ function Home() {
           below fully occludes it, so it only ever becomes visible starting
           where the hero ends — "below the hero", with no extra offset math
           needed since this shifts by a fraction of the same scroll position. */}
-      {!!dynSettings?.bg_home_url && <ParallaxBackground imageUrl={dynSettings.bg_home_url} scrollY={scrollY} />}
+      {!!dynSettings?.bg_home_url && (
+        <>
+          <ParallaxBackground imageUrl={dynSettings.bg_home_url} scrollY={scrollY} />
+          {/* The raw photo read as inconsistent against the otherwise pure-black
+              UI (e.g. the flat VISITEZ-NOUS card right below it) — same flat
+              scrim strength used on the Reserve screen's background. */}
+          <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(5,5,5,0.6)" }]} />
+        </>
+      )}
       <Animated.ScrollView
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: 140 }}
