@@ -24,13 +24,6 @@ const HERO_CACHE_KEY = "@last_hero_image_url";
 // briefly renders the plain flat surface color (no image yet) before the
 // settings fetch resolves and the image+scrim appear — a visible flash.
 const BG_HOME_CACHE_KEY = "@last_bg_home_url";
-// Module-scoped — survives a remount within the same running app session
-// (e.g. this screen being torn down and rebuilt on tab navigation), read
-// synchronously via useState's lazy initializer below so a value already
-// resolved once this session never has to wait on AsyncStorage/network
-// again, and the screen never flashes back to "nothing" between visits.
-let memHero: string | null = null;
-let memBgHome: string | null = null;
 
 export default function HomeRoute() {
   // Loyalty APK / loyalty subdomain — the customer landing screen does not
@@ -46,38 +39,27 @@ export default function HomeRoute() {
 function Home() {
   const { t, lang, setLang } = useI18n();
   const router = useRouter();
-  const [dynSettings, setDynSettings] = useState<{ phone?: string | null; address?: string | null; hero_image_url?: string | null; bg_home_url?: string | null } | null>(
-    () => (memHero || memBgHome) ? { hero_image_url: memHero || undefined, bg_home_url: memBgHome || undefined } : null,
-  );
+  const [dynSettings, setDynSettings] = useState<{ phone?: string | null; address?: string | null; hero_image_url?: string | null; bg_home_url?: string | null } | null>(null);
   const scrollY = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      // 1. Show the last-known hero + background immediately. If this screen
-      //    was already mounted once this session, memHero/memBgHome already
-      //    seeded the initial state above with zero wait. Otherwise (first
-      //    mount after a cold start), fall back to the slower persistent
-      //    cache so we still avoid flashing the baked-in default hero / flat
-      //    background while the live fetch is in flight.
-      if (!memHero && !memBgHome) {
-        const [cachedHero, cachedBgHome] = await Promise.all([
-          storage.getItem<string>(HERO_CACHE_KEY, ""),
-          storage.getItem<string>(BG_HOME_CACHE_KEY, ""),
-        ]);
-        if (cachedHero) memHero = cachedHero;
-        if (cachedBgHome) memBgHome = cachedBgHome;
-        if (!cancelled && (cachedHero || cachedBgHome)) {
-          setDynSettings((prev) => prev ?? { hero_image_url: cachedHero || undefined, bg_home_url: cachedBgHome || undefined });
-        }
+      // 1. Show the last-known hero + background immediately (fast local read,
+      //    no network) so repeat app opens never flash the baked-in default
+      //    hero, or the plain flat background, before the fetch resolves.
+      const [cachedHero, cachedBgHome] = await Promise.all([
+        storage.getItem<string>(HERO_CACHE_KEY, ""),
+        storage.getItem<string>(BG_HOME_CACHE_KEY, ""),
+      ]);
+      if (!cancelled && (cachedHero || cachedBgHome)) {
+        setDynSettings((prev) => prev ?? { hero_image_url: cachedHero || undefined, bg_home_url: cachedBgHome || undefined });
       }
       // 2. Fetch the live settings; update the screen (and the caches for next
       //    time) if either has actually changed since the cached values.
       try {
         const s = await api.publicRestaurantSettings();
         if (!cancelled && s) {
-          if (s.hero_image_url) memHero = s.hero_image_url;
-          if (s.bg_home_url) memBgHome = s.bg_home_url;
           setDynSettings({ phone: s.phone, address: s.address, hero_image_url: s.hero_image_url, bg_home_url: s.bg_home_url });
           if (s.hero_image_url) storage.setItem(HERO_CACHE_KEY, s.hero_image_url);
           if (s.bg_home_url) storage.setItem(BG_HOME_CACHE_KEY, s.bg_home_url);
