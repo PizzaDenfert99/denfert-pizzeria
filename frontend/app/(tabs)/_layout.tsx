@@ -27,6 +27,14 @@ export default function TabsLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
+        // The bottom-tabs navigator wraps each screen's content in its own
+        // container, separate from the root Stack's `contentStyle` — without
+        // an explicit background here it defaults to native white, which
+        // shows through for a frame during the tab-switch transition (the
+        // reported white flash). This is the wrapper, not the individual
+        // screens' own root Views, so each screen's own background can't
+        // fix it on its own.
+        sceneStyle: { backgroundColor: theme.color.surface },
         tabBarActiveTintColor: theme.color.brand,
         tabBarInactiveTintColor: "#857F70",
         tabBarLabelStyle: { fontSize: 11, fontWeight: "600", letterSpacing: 1, marginBottom: 4 },

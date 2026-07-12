@@ -79,8 +79,15 @@ export default function Account() {
     if (!user) return;
     try {
       const [l, r] = await Promise.all([api.loyalty(), api.myReservations()]);
-      setLoyalty(l);
-      setReservations(r);
+      // api.loyalty()/api.myReservations() return a fresh object/array on every
+      // call even when nothing actually changed — this refetch runs on every
+      // tab refocus (see useFocusEffect below), so blindly calling setState
+      // with the new reference forced a re-render (visible flicker) on every
+      // switch back to this tab even when the data was identical. Returning
+      // the SAME `prev` reference when the content matches makes React skip
+      // the re-render entirely.
+      setLoyalty((prev: any) => (JSON.stringify(prev) === JSON.stringify(l) ? prev : l));
+      setReservations((prev) => (JSON.stringify(prev) === JSON.stringify(r) ? prev : r));
     } catch {}
   }, [user]);
 

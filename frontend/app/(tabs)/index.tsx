@@ -212,7 +212,7 @@ const styles = StyleSheet.create({
   pillarsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   pillarCard: { flexBasis: "47%", flexGrow: 1, backgroundColor: theme.color.surfaceSecondary, borderRadius: theme.radius.md, padding: 16, borderWidth: 1, borderColor: theme.color.border, gap: 10, minHeight: 86 },
   pillarTxt: { color: theme.color.onSurfaceSecondary, fontSize: 12, fontWeight: "500", lineHeight: 16 },
-  infoCard: { height: 360, borderRadius: theme.radius.lg, overflow: "hidden", marginTop: 16, backgroundColor: theme.color.surface },
+  infoCard: { height: 360, borderRadius: theme.radius.lg, overflow: "hidden", marginTop: 16, backgroundColor: theme.color.surfaceSecondary },
   infoTitle: { color: theme.color.onSurface, fontSize: 32, lineHeight: 34, fontWeight: "300" },
   infoSub: { color: theme.color.onSurfaceTertiary, fontSize: 14, marginTop: 6 },
   infoRow: { flexDirection: "row", alignItems: "center", gap: 8 },

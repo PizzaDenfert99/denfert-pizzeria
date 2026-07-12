@@ -70,8 +70,15 @@ export default function MenuScreen() {
           price: it.prices?.default ?? (typeof it.prices === "object" ? Object.values(it.prices || {})[0] : null) ?? null,
           category_slug: (it.category_id && slugById.get(it.category_id)) || "pizzas",
         }));
-        setCats(catList.sort((a, b) => a.sort_order - b.sort_order));
-        setRows(list);
+        // api.publicCategories()/api.publicMenuItems() return fresh arrays on
+        // every call even when nothing changed — this refetch runs on every
+        // tab refocus and every 20s poll (see useFocusEffect below), so
+        // blindly calling setState with the new reference forced a re-render
+        // (visible flicker) even when the menu was identical. Returning the
+        // SAME `prev` reference when the content matches makes React skip it.
+        const sortedCats = catList.sort((a, b) => a.sort_order - b.sort_order);
+        setCats((prev) => (JSON.stringify(prev) === JSON.stringify(sortedCats) ? prev : sortedCats));
+        setRows((prev) => (JSON.stringify(prev) === JSON.stringify(list) ? prev : list));
         // Default selected chip = first category that has items, else first chip
         if (catList.length > 0) {
           const firstWithItems = catList.sort((a, b) => a.sort_order - b.sort_order).find((c) => list.some((r) => r.category_slug === c.slug));
@@ -98,8 +105,8 @@ export default function MenuScreen() {
         prices: m.prices || null,
         category_slug: m.category,
       }));
-      setCats(LEGACY_FALLBACK_CATS);
-      setRows(list);
+      setCats(LEGACY_FALLBACK_CATS); // module-level constant — same reference every call, no guard needed
+      setRows((prev) => (JSON.stringify(prev) === JSON.stringify(list) ? prev : list));
       setSource("fastapi");
       // Record the current revision so refreshIfChanged() can skip no-op refetches.
       try {
