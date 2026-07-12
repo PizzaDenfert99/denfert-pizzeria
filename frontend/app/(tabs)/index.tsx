@@ -69,7 +69,21 @@ function Home() {
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 140 }}>
         {/* HERO */}
         <View style={styles.hero}>
-          <Image source={heroSource} style={StyleSheet.absoluteFillObject} contentFit="cover" />
+          {dynSettings?.hero_image_url ? (
+            // Admin-uploaded hero: never crop the actual photo. A blurred,
+            // zoomed copy of the same image fills the banner edge-to-edge
+            // behind it (Instagram/Spotify-style backdrop), while the real
+            // image sits on top at contentFit="contain" so the whole photo
+            // is always visible, unmodified, at full quality — no empty
+            // letterbox bars, no visible crop/zoom on the primary image.
+            <>
+              <Image source={heroSource} style={StyleSheet.absoluteFillObject} contentFit="cover" blurRadius={45} />
+              <View style={[StyleSheet.absoluteFillObject, styles.heroBackdropDim]} />
+              <Image source={heroSource} style={StyleSheet.absoluteFillObject} contentFit="contain" />
+            </>
+          ) : (
+            <Image source={heroSource} style={StyleSheet.absoluteFillObject} contentFit="cover" />
+          )}
           <SafeAreaView edges={["top"]} style={{ flex: 1, paddingHorizontal: theme.space.lg, paddingTop: theme.space.md }}>
             <View style={styles.headerRow}>
               <View style={{ width: 1 }} />
@@ -129,6 +143,7 @@ function Home() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.color.surface },
   hero: { width: "100%", height: 820 },
+  heroBackdropDim: { backgroundColor: "rgba(0,0,0,0.25)" },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   cornerLogo: { width: 175, height: 175, marginTop: -8, marginLeft: -8 },
   brandLogo: { width: 260, height: 260, marginBottom: -6 },
