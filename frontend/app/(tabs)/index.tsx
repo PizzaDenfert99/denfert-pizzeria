@@ -78,7 +78,15 @@ function Home() {
             // letterbox bars, no visible crop/zoom on the primary image.
             <>
               <Image source={heroSource} style={StyleSheet.absoluteFillObject} contentFit="cover" blurRadius={45} />
-              <View style={[StyleSheet.absoluteFillObject, styles.heroBackdropDim]} />
+              {/* Light edge-only fade (not a full dim) — just enough for the lang
+                  toggle and the seam into the next section to read cleanly. Fully
+                  transparent through the middle so the backdrop's true colour (and
+                  the primary photo on top of it) stays visible, not darkened. */}
+              <LinearGradient
+                colors={["rgba(0,0,0,0.18)", "rgba(0,0,0,0)", "rgba(0,0,0,0)", "rgba(0,0,0,0.18)"]}
+                locations={[0, 0.14, 0.86, 1]}
+                style={StyleSheet.absoluteFillObject}
+              />
               <Image source={heroSource} style={StyleSheet.absoluteFillObject} contentFit="contain" />
             </>
           ) : (
@@ -143,7 +151,6 @@ function Home() {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: theme.color.surface },
   hero: { width: "100%", height: 820 },
-  heroBackdropDim: { backgroundColor: "rgba(0,0,0,0.25)" },
   headerRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   cornerLogo: { width: 175, height: 175, marginTop: -8, marginLeft: -8 },
   brandLogo: { width: 260, height: 260, marginBottom: -6 },

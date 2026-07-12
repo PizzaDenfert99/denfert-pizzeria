@@ -251,7 +251,10 @@ const styles = StyleSheet.create({
   chipActive: { borderColor: theme.color.brand, backgroundColor: "rgba(212,175,55,0.12)" },
   chipTxt: { color: theme.color.onSurfaceTertiary, fontSize: 12, fontWeight: "600", letterSpacing: 0.5 },
   chipTxtActive: { color: theme.color.brand },
-  card: { backgroundColor: theme.color.surfaceSecondary, borderRadius: theme.radius.lg, overflow: "hidden", marginBottom: theme.space.lg, borderWidth: 1, borderColor: theme.color.border },
+  // Closer to the page background (theme.color.surface, #050505) than the shared
+  // surfaceSecondary token (#1A1A1A) — the border still carries the separation
+  // between cards while scrolling, so the fill itself can sit nearer to the page.
+  card: { backgroundColor: "#0E0E0E", borderRadius: theme.radius.lg, overflow: "hidden", marginBottom: theme.space.lg, borderWidth: 1, borderColor: theme.color.border },
   imgWrap: { height: 200 },
   cardImg: { ...StyleSheet.absoluteFillObject as any },
   cardBody: { padding: theme.space.lg },
