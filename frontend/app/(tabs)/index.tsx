@@ -14,7 +14,6 @@ import { ParallaxBackground } from "@/src/ParallaxBackground";
 
 // Baked-in hero: title text + FR/IT flag ribbons are already part of this image.
 const HERO_SOURCE = require("../../assets/images/photo_2026-07-09_02-09-51.jpg");
-const RESTAURANT = "https://images.pexels.com/photos/4997894/pexels-photo-4997894.jpeg?auto=compress&cs=tinysrgb&dpr=2&h=900&w=1200";
 // Last hero_image_url we successfully rendered — read back on the NEXT app
 // open so the correct photo shows immediately instead of flashing the
 // baked-in default while the settings request round-trips. expo-image keeps
@@ -157,8 +156,6 @@ function Home() {
         {/* INFO CARD */}
         <View style={{ padding: theme.space.xl }}>
           <View style={styles.infoCard}>
-            <Image source={RESTAURANT} style={StyleSheet.absoluteFillObject} contentFit="cover" />
-            <LinearGradient colors={["rgba(5,5,5,0.3)", "rgba(5,5,5,0.95)"]} style={StyleSheet.absoluteFillObject} />
             <View style={{ padding: theme.space.xl }}>
               <Text style={styles.eyebrowGold}>— {lang === "fr" ? "VISITEZ-NOUS" : "VISIT US"}</Text>
               <Text style={styles.infoTitle}>{addressLines.l1}{addressLines.l2 ? `\n${addressLines.l2}` : ""}</Text>
@@ -198,7 +195,7 @@ const styles = StyleSheet.create({
   pillarsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
   pillarCard: { flexBasis: "47%", flexGrow: 1, backgroundColor: theme.color.surfaceSecondary, borderRadius: theme.radius.md, padding: 16, borderWidth: 1, borderColor: theme.color.border, gap: 10, minHeight: 86 },
   pillarTxt: { color: theme.color.onSurfaceSecondary, fontSize: 12, fontWeight: "500", lineHeight: 16 },
-  infoCard: { height: 360, borderRadius: theme.radius.lg, overflow: "hidden", marginTop: 16 },
+  infoCard: { height: 360, borderRadius: theme.radius.lg, overflow: "hidden", marginTop: 16, backgroundColor: theme.color.surface },
   infoTitle: { color: theme.color.onSurface, fontSize: 32, lineHeight: 34, fontWeight: "300" },
   infoSub: { color: theme.color.onSurfaceTertiary, fontSize: 14, marginTop: 6 },
   infoRow: { flexDirection: "row", alignItems: "center", gap: 8 },

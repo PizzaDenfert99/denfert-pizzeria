@@ -170,7 +170,16 @@ export default function Reserve() {
 
   return (
     <View testID="reserve-screen" style={[styles.container, bgUrl ? { backgroundColor: "transparent" } : null]}>
-      {!!bgUrl && <ParallaxBackground imageUrl={bgUrl} scrollY={scrollY} />}
+      {!!bgUrl && (
+        <>
+          <ParallaxBackground imageUrl={bgUrl} scrollY={scrollY} />
+          {/* The background photo alone was too bright/clear behind the form —
+              a flat scrim (same ~0.6 dark strength used elsewhere in this app,
+              e.g. the auth screen's photo backdrop) keeps the counters/inputs
+              readable without hiding the parallax effect entirely. */}
+          <View pointerEvents="none" style={[StyleSheet.absoluteFillObject, { backgroundColor: "rgba(5,5,5,0.6)" }]} />
+        </>
+      )}
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={{ flex: 1 }}>
         <Animated.ScrollView
           keyboardShouldPersistTaps="handled"
