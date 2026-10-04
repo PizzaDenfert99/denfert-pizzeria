@@ -6,7 +6,7 @@ import { Image } from "expo-image";
 import { useI18n } from "@/src/i18n";
 import { api } from "@/src/api";
 import { theme } from "@/src/theme";
-import type { Category, MenuItem } from "@/src/lib/supabase";
+import type { Category, MenuItem } from "@/src/api";
 import { ParallaxBackground } from "@/src/ParallaxBackground";
 import { useBackgroundImage } from "@/src/hooks/use-background-image";
 
@@ -50,7 +50,7 @@ export default function MenuScreen() {
 
   const load = useCallback(async (spinner: boolean = true) => {
     if (spinner) setLoading(true);
-    // --- 1. Try the CMS menu (Supabase-backed, proxied by our own backend) first ---
+    // --- 1. Try the CMS menu (self-hosted Postgres, proxied by our own backend) first ---
     try {
       const [cmsCats, cmsItems] = await Promise.all([api.publicCategories(), api.publicMenuItems()]);
       if ((cmsCats as Category[]).length > 0 || (cmsItems as MenuItem[]).length > 0) {
@@ -116,7 +116,7 @@ export default function MenuScreen() {
         // Older backend without /menu/version — pull-to-refresh still works.
       }
     } catch (e) {
-      console.error("Both Supabase and FastAPI failed", e);
+      console.error("Both the CMS menu and the FastAPI fallback failed", e);
       setRows([]);
     } finally {
       if (spinner) setLoading(false);

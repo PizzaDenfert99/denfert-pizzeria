@@ -64,7 +64,7 @@ See [`DEPLOY.md`](./DEPLOY.md) for the exact commands. TL;DR:
 git clone https://github.com/PizzaDenfert99/denfert-pizzeria.git
 cd denfert-pizzeria
 cp .env.docker.example .env    # edit real values
-# obtain TLS certs into nginx/certs/api.pizzadenfert.fr/ and
+# obtain TLS certs: see CERTS.md (scripts/cert-issue.sh) -- into nginx/certs/api.pizzadenfert.fr/ and
 # nginx/certs/loyalty.pizzadenfert.fr/ (fullchain.pem + privkey.pem)
 docker compose up -d --build
 ```

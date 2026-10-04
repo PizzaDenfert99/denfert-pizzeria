@@ -101,3 +101,9 @@ play-store-service-account.json
 credentials.json
 *.key
 .credentials
+
+# Distributable build artifacts dropped for direct download (nginx serves
+# these at /downloads/ — see docker-compose.yml + nginx/nginx.conf).
+nginx/downloads/*
+!nginx/downloads/.gitkeep
+frontend/.metro-cache/

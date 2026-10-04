@@ -10,13 +10,14 @@ export type PickedFile = {
   name: string;
   type: string;
   size: number;
-  /** Blob suitable for `supabase.storage.from(...).upload()`. */
+  /** Blob suitable for uploading via the backend's multipart upload-image endpoint. */
   blob: Blob;
   /** Original URI (file://...) on native, dataURL on web — useful for previews. */
   uri: string;
 };
 
-const MAX_BYTES = 20 * 1024 * 1024; // 20 MB hard cap matches the Supabase bucket limit
+const MAX_BYTES = 20 * 1024 * 1024; // 20 MB hard cap matches the backend's upload-image limit
+const MAX_VIDEO_BYTES = 50 * 1024 * 1024; // matches the backend's video upload limit
 
 function extFromMime(mime: string): string {
   if (!mime) return "jpg";
@@ -25,6 +26,11 @@ function extFromMime(mime: string): string {
   if (mime.includes("heic") || mime.includes("heif")) return "heic";
   if (mime.includes("gif")) return "gif";
   return "jpg";
+}
+
+function extFromVideoMime(mime: string): string {
+  if (mime && mime.includes("webm")) return "webm";
+  return "mp4";
 }
 
 /**
@@ -85,7 +91,7 @@ export async function pickImageFromGallery(opts?: {
     return null;
   }
 
-  // 3. Convert the file URI to a Blob so we can stream it to Supabase Storage
+  // 3. Convert the file URI to a Blob so we can stream it to the backend
   //    (the storage SDK accepts Blob / ArrayBuffer / File but NOT raw file:// URIs).
   const resp = await fetch(a.uri);
   const blob = await resp.blob();
@@ -125,5 +131,67 @@ export async function takePhotoWithCamera(): Promise<PickedFile | null> {
   const mime = a.mimeType || blob.type || "image/jpeg";
   const ext = extFromMime(mime);
   const name = (a.fileName || `photo-${Date.now()}.${ext}`).replace(/[^a-zA-Z0-9._-]/g, "_");
+  return { name, type: mime, size: blob.size || a.fileSize || 0, blob, uri: a.uri };
+}
+
+/**
+ * Pick a short video (kiosk promo slides) on iOS/Android/web. Same shape and
+ * permission-handling pattern as pickImageFromGallery, just backed by
+ * expo-image-picker's video mode and a higher size cap (50 MB, matches the
+ * backend's video upload limit). Returns `null` if the user cancels or denies.
+ */
+export async function pickVideoFromGallery(): Promise<PickedFile | null> {
+  if (Platform.OS === "web") {
+    return await new Promise((resolve) => {
+      const input = (typeof document !== "undefined" ? document.createElement("input") : null) as HTMLInputElement | null;
+      if (!input) { resolve(null); return; }
+      input.type = "file"; input.accept = "video/mp4,video/webm";
+      input.onchange = async () => {
+        const f = input.files?.[0];
+        if (!f) { resolve(null); return; }
+        if (f.size > MAX_VIDEO_BYTES) { Alert.alert("Fichier trop gros", "Maximum 50 MB"); resolve(null); return; }
+        resolve({ name: f.name, type: f.type || "video/mp4", size: f.size, blob: f, uri: URL.createObjectURL(f) });
+      };
+      input.click();
+    });
+  }
+
+  let perm = await ImagePicker.getMediaLibraryPermissionsAsync();
+  if (!perm.granted) {
+    if (perm.canAskAgain) perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
+  }
+  if (!perm.granted) {
+    Alert.alert("Accès photos refusé", "Pour ajouter une vidéo, autorisez l'accès aux photos dans les réglages de l'application.", [
+      { text: "Annuler", style: "cancel" },
+      { text: "Ouvrir les réglages", onPress: () => Linking.openSettings() },
+    ]);
+    return null;
+  }
+
+  const res = await ImagePicker.launchImageLibraryAsync({
+    mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+    allowsEditing: false,
+    allowsMultipleSelection: false,
+    quality: 1,
+  });
+  if (res.canceled || !res.assets || res.assets.length === 0) return null;
+  const a = res.assets[0];
+
+  if (a.fileSize && a.fileSize > MAX_VIDEO_BYTES) {
+    Alert.alert("Fichier trop gros", "Maximum 50 MB");
+    return null;
+  }
+
+  const resp = await fetch(a.uri);
+  const blob = await resp.blob();
+  const mime = a.mimeType || blob.type || "video/mp4";
+  const ext = extFromVideoMime(mime);
+  const name = (a.fileName || `video-${Date.now()}.${ext}`).replace(/[^a-zA-Z0-9._-]/g, "_");
+
+  if (blob.size > MAX_VIDEO_BYTES) {
+    Alert.alert("Fichier trop gros", "Maximum 50 MB");
+    return null;
+  }
+
   return { name, type: mime, size: blob.size || a.fileSize || 0, blob, uri: a.uri };
 }

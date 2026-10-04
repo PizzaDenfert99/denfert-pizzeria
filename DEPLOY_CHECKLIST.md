@@ -51,8 +51,7 @@ sudo make bootstrap
 
 Open `.env` and set:
 
-- [ ] `SUPABASE_SERVICE_ROLE_KEY` — the server-role key for `fuxyinngmdzzoumloenv.supabase.co`.
-- [ ] `SUPABASE_ANON_KEY` — the anon key (used by the frontend but kept here for reference).
+- [ ] `POSTGRES_PASSWORD` — generate with `openssl rand -hex 24`.
 - [ ] `VAPID_PUBLIC_KEY` / `VAPID_PRIVATE_KEY` — only if you want web push.
 - [ ] `TWILIO_*` / `OVH_*` — only if you want real SMS OTP; otherwise leave empty (demo mode).
 
@@ -65,6 +64,8 @@ make env-check
 - [ ] All required keys reported `[ok]`.
 
 ## 5. Obtain real TLS certificates
+
+> **⚠️ DEPRECATED — see [CERTS.md](./CERTS.md).** The host-certbot + renewal-hook steps below do NOT work on this host (Nginx runs only in Docker) and caused a real outage on 2026-10-04. Use scripts/cert-issue.sh / scripts/cert-renew.sh instead.
 
 ```bash
 sudo apt-get install -y certbot

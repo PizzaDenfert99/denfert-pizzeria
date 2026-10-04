@@ -17,6 +17,9 @@ python-dotenv==1.2.2
 motor==3.3.1
 pymongo==4.6.3
 
+# Postgres (self-hosted CMS store, replaces Supabase Postgres)
+asyncpg==0.30.0
+
 # Models / validation (EmailStr needs email-validator)
 pydantic==2.13.4
 email-validator==2.3.0

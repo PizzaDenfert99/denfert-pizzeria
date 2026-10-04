@@ -10,6 +10,7 @@ from datetime import datetime, timezone, timedelta
 import httpx, bcrypt, jwt
 import json as _json
 from pywebpush import webpush, WebPushException
+import asyncpg
 
 ROOT = Path(__file__).parent
 load_dotenv(ROOT / ".env")
@@ -24,11 +25,52 @@ client = AsyncIOMotorClient(
 db = client[os.environ["DB_NAME"]]
 JWT_SECRET = os.environ["JWT_SECRET"]
 
-# Supabase server-side (service-role) configuration — used ONLY for the one-time
-# CMS seed import endpoint. These are optional: when absent, the seed-from-mongo
-# endpoint returns a friendly 503 instead of crashing.
-SUPABASE_URL = (os.environ.get("SUPABASE_URL") or "").rstrip("/")
-SUPABASE_SERVICE_ROLE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or ""
+# ---- Postgres (self-hosted CMS store — categories/menu_items/restaurant_settings) ----
+POSTGRES_HOST = os.environ.get("POSTGRES_HOST", "postgres")
+POSTGRES_PORT = int(os.environ.get("POSTGRES_PORT", "5432"))
+POSTGRES_DB = os.environ.get("POSTGRES_DB", "pizzadenfert")
+POSTGRES_USER = os.environ.get("POSTGRES_USER", "pizzadenfert")
+POSTGRES_PASSWORD = os.environ.get("POSTGRES_PASSWORD", "")
+UPLOADS_DIR = Path(os.environ.get("UPLOADS_DIR", "/app/uploads/menu-images"))
+PUBLIC_IMAGE_BASE = os.environ.get("PUBLIC_IMAGE_BASE", "https://api.pizzadenfert.fr/menu-images")
+UPLOADS_DIR.mkdir(parents=True, exist_ok=True)
+
+pg_pool: Optional[asyncpg.Pool] = None
+
+
+async def _init_pg_codecs(conn: asyncpg.Connection):
+    # asyncpg returns jsonb/json as raw text by default; register codecs so
+    # ingredients/prices/opening_hours round-trip as native Python list/dict,
+    # matching exactly what httpx+PostgREST used to hand back via r.json().
+    await conn.set_type_codec("jsonb", encoder=_json.dumps, decoder=_json.loads, schema="pg_catalog", format="text")
+    await conn.set_type_codec("json", encoder=_json.dumps, decoder=_json.loads, schema="pg_catalog", format="text")
+
+
+def _pg_row(rec: asyncpg.Record) -> dict:
+    """asyncpg.Record -> plain dict, with uuid/datetime stringified the way
+    PostgREST used to serialize them, so response shapes are unchanged."""
+    out = {}
+    for k, v in dict(rec).items():
+        if isinstance(v, uuid.UUID):
+            out[k] = str(v)
+        elif isinstance(v, datetime):
+            out[k] = v.isoformat()
+        else:
+            out[k] = v
+    return out
+
+
+def _pg_rows(recs) -> list:
+    return [_pg_row(r) for r in recs]
+
+
+def _build_update(table: str, payload: dict) -> tuple:
+    """payload -> ('UPDATE table SET col1=$2, col2=$3 WHERE id=$1 RETURNING *', [v1, v2, ...]).
+    Column names come only from the fixed keys of validated Pydantic models
+    (never raw user input); values still go through $N binds."""
+    cols = list(payload.keys())
+    set_clause = ", ".join(f"{c} = ${i + 2}" for i, c in enumerate(cols))
+    return f"UPDATE {table} SET {set_clause} WHERE id = $1 RETURNING *", [payload[c] for c in cols]
 
 # ---- SMS / OTP provider configuration ----------------------------------------
 # DEMO MODE (default): SMS_PROVIDER empty/none → the OTP code is returned in the
@@ -209,6 +251,14 @@ AD_SECTIONS = ("loyalty", "experience", "ingredients")
 # defaults — they simply have none of these fields set.
 AD_EFFECTS = ("kenburns", "wave", "rotate", "slide", "fade", "none")
 AD_FONTS = ("System", "PlayfairDisplay_600SemiBold", "DancingScript_600SemiBold")
+# Video slides loop silently for the same admin-configured duration_ms as image
+# slides (no change to the advance-timer model) and never apply effect_type —
+# the kiosk client is responsible for skipping the Ken Burns/wave/etc. transform
+# wrapper for video, since the video itself already has motion. We still accept
+# and store effect_type for video slides (so switching a slide back to "image"
+# doesn't lose a previously-chosen effect), we just don't validate it as
+# meaningful for video here — that's a rendering concern, not a data concern.
+AD_MEDIA_TYPES = ("image", "video")
 _HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 
@@ -218,6 +268,7 @@ class AdSlideIn(BaseModel):
     title: str
     subtitle: Optional[str] = ""
     image_url: Optional[str] = ""
+    media_type: Optional[str] = "image"      # "image" | "video"
     duration_ms: int = 5000
     active: bool = True
     background_color: Optional[str] = None  # hex, e.g. "#1a1a1a"
@@ -232,6 +283,7 @@ class AdSlideUpdateIn(BaseModel):
     title: Optional[str] = None
     subtitle: Optional[str] = None
     image_url: Optional[str] = None
+    media_type: Optional[str] = None
     duration_ms: Optional[int] = None
     active: Optional[bool] = None
     background_color: Optional[str] = None
@@ -241,7 +293,8 @@ class AdSlideUpdateIn(BaseModel):
 
 
 def _validate_slide_style(background_color: Optional[str], font_family: Optional[str],
-                           font_color: Optional[str], effect_type: Optional[str]) -> None:
+                           font_color: Optional[str], effect_type: Optional[str],
+                           media_type: Optional[str] = None) -> None:
     """Empty string means 'clear override, fall back to default' — only non-empty values are validated."""
     if background_color and not _HEX_COLOR_RE.match(background_color):
         raise HTTPException(400, "background_color must be a hex color like #1a1a1a")
@@ -251,6 +304,8 @@ def _validate_slide_style(background_color: Optional[str], font_family: Optional
         raise HTTPException(400, f"Invalid font_family. Allowed: {', '.join(AD_FONTS)}")
     if effect_type and effect_type not in AD_EFFECTS:
         raise HTTPException(400, f"Invalid effect_type. Allowed: {', '.join(AD_EFFECTS)}")
+    if media_type and media_type not in AD_MEDIA_TYPES:
+        raise HTTPException(400, f"Invalid media_type. Allowed: {', '.join(AD_MEDIA_TYPES)}")
 
 
 class AdReorderIn(BaseModel):
@@ -324,6 +379,12 @@ SEED = [
 
 @app.on_event("startup")
 async def startup():
+    global pg_pool
+    pg_pool = await asyncpg.create_pool(
+        host=POSTGRES_HOST, port=POSTGRES_PORT, database=POSTGRES_DB,
+        user=POSTGRES_USER, password=POSTGRES_PASSWORD,
+        min_size=2, max_size=10, init=_init_pg_codecs,
+    )
     # Ensure email index is partial so multiple users with email=None / missing are allowed (phone-only OTP users).
     # NOTE: a plain `sparse` index still indexes explicit null values; only documents missing the field are
     # skipped. We need a partialFilterExpression to actually exclude null/non-string emails.
@@ -351,17 +412,17 @@ async def startup():
             await _coro
         except Exception as _idx_err:
             log.warning(f"create_index({_name}) skipped: {_idx_err}")
-    # Menu seed: ONLY insert if collection is empty. Supabase is now the source
-    # of truth for the customer menu (see /app/supabase/setup.sql + /admin-cms),
-    # but we keep this local copy as a fallback for the legacy /api/menu route
-    # and to resolve pizza_id → name in admin stats. Idempotent on restart.
+    # Menu seed: ONLY insert if collection is empty. Postgres (backend/db/init.sql)
+    # is now the source of truth for the customer menu (see /admin-cms), but we
+    # keep this local copy as a fallback for the legacy /api/menu route and to
+    # resolve pizza_id → name in admin stats. Idempotent on restart.
     try:
         existing_menu = await db.menu.count_documents({})
         if existing_menu == 0:
             await db.menu.insert_many([dict(m) for m in SEED])
             log.info(f"Seeded {len(SEED)} menu items (fallback set)")
         else:
-            log.info(f"Menu already has {existing_menu} items — skipping seed (Supabase owns the live menu)")
+            log.info(f"Menu already has {existing_menu} items — skipping seed (Postgres owns the live menu)")
     except Exception as _seed_err:
         log.warning(f"menu seed skipped: {_seed_err}")
     if not await db.users.find_one({"email": "admin@pizzadenfert.fr"}):
@@ -1784,7 +1845,7 @@ async def admin_create_slide(b: AdSlideIn, authorization: Optional[str] = Header
         raise HTTPException(400, f"Invalid section. Allowed: {', '.join(AD_SECTIONS)}")
     if b.duration_ms < 500 or b.duration_ms > 60000:
         raise HTTPException(400, "duration_ms must be between 500 and 60000")
-    _validate_slide_style(b.background_color, b.font_family, b.font_color, b.effect_type)
+    _validate_slide_style(b.background_color, b.font_family, b.font_color, b.effect_type, b.media_type)
     order = b.order
     if order is None:
         # Append: max order in section + 1
@@ -1794,7 +1855,8 @@ async def admin_create_slide(b: AdSlideIn, authorization: Optional[str] = Header
         "id": str(uuid.uuid4()),
         "section": b.section, "order": int(order),
         "title": b.title, "subtitle": b.subtitle or "",
-        "image_url": b.image_url or "", "duration_ms": int(b.duration_ms),
+        "image_url": b.image_url or "", "media_type": b.media_type or "image",
+        "duration_ms": int(b.duration_ms),
         "active": bool(b.active),
         "created_at": now(), "updated_at": now(),
         "created_by": me.get("user_id"),
@@ -1819,12 +1881,13 @@ async def admin_update_slide(sid: str, b: AdSlideUpdateIn, authorization: Option
     if b.title is not None: update["title"] = b.title
     if b.subtitle is not None: update["subtitle"] = b.subtitle
     if b.image_url is not None: update["image_url"] = b.image_url
+    if b.media_type is not None: update["media_type"] = b.media_type
     if b.duration_ms is not None:
         if b.duration_ms < 500 or b.duration_ms > 60000:
             raise HTTPException(400, "duration_ms must be between 500 and 60000")
         update["duration_ms"] = int(b.duration_ms)
     if b.active is not None: update["active"] = bool(b.active)
-    _validate_slide_style(b.background_color, b.font_family, b.font_color, b.effect_type)
+    _validate_slide_style(b.background_color, b.font_family, b.font_color, b.effect_type, b.media_type)
     if b.background_color is not None: update["background_color"] = b.background_color
     if b.font_family is not None: update["font_family"] = b.font_family
     if b.font_color is not None: update["font_color"] = b.font_color
@@ -1893,80 +1956,50 @@ async def api_root(): return {"service": "Pizza Denfert API", "status": "ok"}
 
 
 # ============================================================================
-# Public Supabase-backed menu API — read-only proxy endpoints for the CMS menu
-# living in Supabase (see supabase/setup.sql). Proxied server-side with the
-# service-role key so the customer app needs no Supabase credentials of its
-# own. The legacy MongoDB-backed /api/menu route above is untouched.
+# Public menu API — read-only endpoints for the CMS menu living in the local
+# Postgres store (formerly Supabase; see backend/db/init.sql). The legacy
+# MongoDB-backed /api/menu route above is untouched.
 # ============================================================================
-
-def _sb_read_headers():
-    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-        raise HTTPException(503, "Supabase not configured on server (SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing).")
-    return {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-    }
-
 
 @api.get("/public/categories")
 async def public_categories():
-    headers = _sb_read_headers()
-    async with httpx.AsyncClient(timeout=15.0) as cli:
-        r = await cli.get(
-            f"{SUPABASE_URL}/rest/v1/categories",
-            headers=headers,
-            params={
-                "select": "id,name,slug,sort_order",
-                "is_active": "eq.true",
-                "order": "sort_order.asc",
-            },
+    async with pg_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, name, slug, sort_order FROM categories "
+            "WHERE is_active = true ORDER BY sort_order ASC"
         )
-    if r.status_code >= 400:
-        raise HTTPException(502, f"Supabase categories fetch failed: {r.status_code} {r.text[:300]}")
-    return r.json()
+    return _pg_rows(rows)
 
 
 @api.get("/public/menu-items")
 async def public_menu_items():
-    headers = _sb_read_headers()
-    async with httpx.AsyncClient(timeout=15.0) as cli:
-        r = await cli.get(
-            f"{SUPABASE_URL}/rest/v1/menu_items",
-            headers=headers,
-            params={
-                "select": "id,name,description,ingredients,prices,image_url,thumbnail_url,category_id,sort_order",
-                "is_active": "eq.true",
-                "order": "sort_order.asc",
-            },
+    async with pg_pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, name, description, ingredients, prices, image_url, thumbnail_url, "
+            "category_id, sort_order FROM menu_items "
+            "WHERE is_active = true ORDER BY sort_order ASC"
         )
-    if r.status_code >= 400:
-        raise HTTPException(502, f"Supabase menu_items fetch failed: {r.status_code} {r.text[:300]}")
-    return r.json()
+    return _pg_rows(rows)
 
 
 @api.get("/public/restaurant-settings")
 async def public_restaurant_settings():
-    headers = _sb_read_headers()
-    async with httpx.AsyncClient(timeout=15.0) as cli:
-        r = await cli.get(
-            f"{SUPABASE_URL}/rest/v1/restaurant_settings",
-            headers=headers,
-            params={"select": "opening_hours,phone,address,hero_image_url,bg_home_url,bg_reservations_url,bg_account_url,bg_menu_url,updated_at", "limit": "1"},
+    async with pg_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT opening_hours, phone, address, hero_image_url, bg_home_url, "
+            "bg_reservations_url, bg_account_url, bg_menu_url, updated_at "
+            "FROM restaurant_settings LIMIT 1"
         )
-    if r.status_code >= 400:
-        raise HTTPException(502, f"Supabase restaurant_settings fetch failed: {r.status_code} {r.text[:300]}")
-    rows = r.json()
-    if not rows:
+    if row is None:
         raise HTTPException(404, "Restaurant settings not configured")
-    return rows[0]
+    return _pg_row(row)
 
 
 # ============================================================================
-# Admin CMS (Supabase-backed categories/menu_items/restaurant_settings) — full
-# CRUD proxied server-side with the service-role key, protected by our own
-# FastAPI admin JWT (_require_admin), NOT Supabase Auth. This lets the CMS
-# frontend reuse the same login/session as every other /admin/* screen
-# instead of maintaining a second, separate Supabase Auth session.
+# Admin CMS (Postgres-backed categories/menu_items/restaurant_settings) — full
+# CRUD against the self-hosted Postgres pool, protected by our own FastAPI
+# admin JWT (_require_admin). This lets the CMS frontend reuse the same
+# login/session as every other /admin/* screen.
 # ============================================================================
 
 class CmsCategoryIn(BaseModel):
@@ -2019,34 +2052,24 @@ class CmsSettingsUpdate(BaseModel):
     bg_menu_url: Optional[str] = None
 
 
-async def _sb_rest(method: str, path: str, **kwargs) -> httpx.Response:
-    headers = {**_sb_headers(), **kwargs.pop("headers", {})}
-    async with httpx.AsyncClient(timeout=20.0) as cli:
-        return await cli.request(method, f"{SUPABASE_URL}/rest/v1{path}", headers=headers, **kwargs)
-
-
-def _sb_raise_if_error(r: httpx.Response, what: str):
-    if r.status_code >= 400:
-        raise HTTPException(502, f"Supabase {what} failed: {r.status_code} {r.text[:300]}")
-
-
 # ---- Categories ----
 @api.get("/admin/cms/categories")
 async def admin_cms_list_categories(authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)
-    r = await _sb_rest("GET", "/categories", params={"select": "*", "order": "sort_order.asc"})
-    _sb_raise_if_error(r, "categories fetch")
-    return r.json()
+    async with pg_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM categories ORDER BY sort_order ASC")
+    return _pg_rows(rows)
 
 
 @api.post("/admin/cms/categories", status_code=201)
 async def admin_cms_create_category(b: CmsCategoryIn, authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)
-    payload = {"name": b.name, "slug": b.slug, "sort_order": b.sort_order or 0, "is_active": b.is_active if b.is_active is not None else True}
-    r = await _sb_rest("POST", "/categories", json=payload)
-    _sb_raise_if_error(r, "category create")
-    rows = r.json()
-    return rows[0] if rows else {}
+    async with pg_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO categories (name, slug, sort_order, is_active) VALUES ($1,$2,$3,$4) RETURNING *",
+            b.name, b.slug, b.sort_order or 0, b.is_active if b.is_active is not None else True,
+        )
+    return _pg_row(row)
 
 
 @api.patch("/admin/cms/categories/{cat_id}")
@@ -2055,21 +2078,26 @@ async def admin_cms_update_category(cat_id: str, b: CmsCategoryUpdate, authoriza
     payload = {k: v for k, v in b.model_dump().items() if v is not None}
     if not payload:
         raise HTTPException(400, "No fields to update")
-    r = await _sb_rest("PATCH", "/categories", params={"id": f"eq.{cat_id}"}, json=payload)
-    _sb_raise_if_error(r, "category update")
-    rows = r.json()
-    if not rows:
+    sql, params = _build_update("categories", payload)
+    try:
+        async with pg_pool.acquire() as conn:
+            row = await conn.fetchrow(sql, cat_id, *params)
+    except (asyncpg.DataError, ValueError):
         raise HTTPException(404, "Category not found")
-    return rows[0]
+    if row is None:
+        raise HTTPException(404, "Category not found")
+    return _pg_row(row)
 
 
 @api.delete("/admin/cms/categories/{cat_id}")
 async def admin_cms_delete_category(cat_id: str, authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)
-    r = await _sb_rest("DELETE", "/categories", params={"id": f"eq.{cat_id}"})
-    _sb_raise_if_error(r, "category delete")
-    rows = r.json()
-    if not rows:
+    try:
+        async with pg_pool.acquire() as conn:
+            row = await conn.fetchrow("DELETE FROM categories WHERE id = $1 RETURNING id", cat_id)
+    except (asyncpg.DataError, ValueError):
+        raise HTTPException(404, "Category not found")
+    if row is None:
         raise HTTPException(404, "Category not found")
     return {"deleted": True}
 
@@ -2078,29 +2106,25 @@ async def admin_cms_delete_category(cat_id: str, authorization: Optional[str] = 
 @api.get("/admin/cms/menu-items")
 async def admin_cms_list_menu_items(authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)
-    r = await _sb_rest("GET", "/menu_items", params={"select": "*", "order": "sort_order.asc"})
-    _sb_raise_if_error(r, "menu_items fetch")
-    return r.json()
+    async with pg_pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM menu_items ORDER BY sort_order ASC")
+    return _pg_rows(rows)
 
 
 @api.post("/admin/cms/menu-items", status_code=201)
 async def admin_cms_create_menu_item(b: CmsMenuItemIn, authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)
-    payload = {
-        "name": b.name,
-        "description": b.description,
-        "ingredients": b.ingredients or [],
-        "prices": b.prices or {},
-        "image_url": b.image_url,
-        "thumbnail_url": b.thumbnail_url,
-        "category_id": b.category_id,
-        "sort_order": b.sort_order or 0,
-        "is_active": b.is_active if b.is_active is not None else True,
-    }
-    r = await _sb_rest("POST", "/menu_items", json=payload)
-    _sb_raise_if_error(r, "menu_item create")
-    rows = r.json()
-    return rows[0] if rows else {}
+    async with pg_pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO menu_items
+               (name, description, ingredients, prices, image_url, thumbnail_url,
+                category_id, sort_order, is_active)
+               VALUES ($1,$2,$3::jsonb,$4::jsonb,$5,$6,$7,$8,$9) RETURNING *""",
+            b.name, b.description, b.ingredients or [], b.prices or {},
+            b.image_url, b.thumbnail_url, b.category_id,
+            b.sort_order or 0, b.is_active if b.is_active is not None else True,
+        )
+    return _pg_row(row)
 
 
 @api.patch("/admin/cms/menu-items/{item_id}")
@@ -2109,21 +2133,26 @@ async def admin_cms_update_menu_item(item_id: str, b: CmsMenuItemUpdate, authori
     payload = {k: v for k, v in b.model_dump().items() if v is not None}
     if not payload:
         raise HTTPException(400, "No fields to update")
-    r = await _sb_rest("PATCH", "/menu_items", params={"id": f"eq.{item_id}"}, json=payload)
-    _sb_raise_if_error(r, "menu_item update")
-    rows = r.json()
-    if not rows:
+    sql, params = _build_update("menu_items", payload)
+    try:
+        async with pg_pool.acquire() as conn:
+            row = await conn.fetchrow(sql, item_id, *params)
+    except (asyncpg.DataError, ValueError):
         raise HTTPException(404, "Menu item not found")
-    return rows[0]
+    if row is None:
+        raise HTTPException(404, "Menu item not found")
+    return _pg_row(row)
 
 
 @api.delete("/admin/cms/menu-items/{item_id}")
 async def admin_cms_delete_menu_item(item_id: str, authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)
-    r = await _sb_rest("DELETE", "/menu_items", params={"id": f"eq.{item_id}"})
-    _sb_raise_if_error(r, "menu_item delete")
-    rows = r.json()
-    if not rows:
+    try:
+        async with pg_pool.acquire() as conn:
+            row = await conn.fetchrow("DELETE FROM menu_items WHERE id = $1 RETURNING id", item_id)
+    except (asyncpg.DataError, ValueError):
+        raise HTTPException(404, "Menu item not found")
+    if row is None:
         raise HTTPException(404, "Menu item not found")
     return {"deleted": True}
 
@@ -2132,12 +2161,11 @@ async def admin_cms_delete_menu_item(item_id: str, authorization: Optional[str] 
 @api.get("/admin/cms/restaurant-settings")
 async def admin_cms_get_settings(authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)
-    r = await _sb_rest("GET", "/restaurant_settings", params={"select": "*", "limit": "1"})
-    _sb_raise_if_error(r, "restaurant_settings fetch")
-    rows = r.json()
-    if not rows:
+    async with pg_pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT * FROM restaurant_settings LIMIT 1")
+    if row is None:
         raise HTTPException(404, "Restaurant settings not configured")
-    return rows[0]
+    return _pg_row(row)
 
 
 @api.patch("/admin/cms/restaurant-settings/{settings_id}")
@@ -2146,163 +2174,65 @@ async def admin_cms_update_settings(settings_id: str, b: CmsSettingsUpdate, auth
     payload = {k: v for k, v in b.model_dump().items() if v is not None}
     if not payload:
         raise HTTPException(400, "No fields to update")
-    r = await _sb_rest("PATCH", "/restaurant_settings", params={"id": f"eq.{settings_id}"}, json=payload)
-    _sb_raise_if_error(r, "restaurant_settings update")
-    rows = r.json()
-    if not rows:
+    sql, params = _build_update("restaurant_settings", payload)
+    try:
+        async with pg_pool.acquire() as conn:
+            row = await conn.fetchrow(sql, settings_id, *params)
+    except (asyncpg.DataError, ValueError):
         raise HTTPException(404, "Restaurant settings not found")
-    return rows[0]
+    if row is None:
+        raise HTTPException(404, "Restaurant settings not found")
+    return _pg_row(row)
 
 
-# ---- Image upload (menu-images bucket) ----
+# ---- Image upload (local disk, replaces Supabase Storage "menu-images" bucket) ----
+# Allowed upload extensions -> (max bytes, is_video). Kept as an explicit
+# allowlist rather than accepting any filename extension — this endpoint
+# writes bytes straight to disk under the public web root, so unrestricted
+# extensions would let an admin (accidentally or not) host arbitrary file
+# types off api.pizzadenfert.fr.
+_IMAGE_EXTS = {"png": 20 * 1024 * 1024, "jpg": 20 * 1024 * 1024, "jpeg": 20 * 1024 * 1024,
+               "webp": 20 * 1024 * 1024, "gif": 20 * 1024 * 1024}
+_VIDEO_EXTS = {"mp4": 50 * 1024 * 1024, "webm": 50 * 1024 * 1024}
+
+
 @api.post("/admin/cms/upload-image")
 async def admin_cms_upload_image(
     file: UploadFile = File(...),
     item_id: str = Form(...),
     kind: str = Form("original"),
+    folder: str = Form("menu_items"),
     authorization: Optional[str] = Header(None),
 ):
     await _require_admin(authorization)
     if kind not in ("original", "thumb"):
         raise HTTPException(400, "kind must be 'original' or 'thumb'")
-    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-        raise HTTPException(503, "Supabase not configured on server (SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing).")
+    safe_folder = re.sub(r"[^a-zA-Z0-9_-]", "", folder) or "menu_items"
     safe_item_id = re.sub(r"[^a-zA-Z0-9_-]", "", item_id) or "new"
     raw_ext = (file.filename.rsplit(".", 1)[-1] if file.filename and "." in file.filename else "jpg").lower()
     ext = re.sub(r"[^a-z0-9]", "", raw_ext) or "jpg"
     if kind == "thumb":
         ext = "jpg"  # thumbnails are always re-encoded as JPEG client-side
+    max_bytes = _IMAGE_EXTS.get(ext) or _VIDEO_EXTS.get(ext)
+    if max_bytes is None:
+        allowed = ", ".join(sorted({*_IMAGE_EXTS, *_VIDEO_EXTS}))
+        raise HTTPException(400, f"Unsupported file type .{ext}. Allowed: {allowed}")
     stamp = int(datetime.now(timezone.utc).timestamp() * 1000)
-    path = f"menu_items/{safe_item_id}/{stamp}_{kind}.{ext}"
+    rel_path = f"{safe_folder}/{safe_item_id}/{stamp}_{kind}.{ext}"
     content = await file.read()
-    if len(content) > 20 * 1024 * 1024:
-        raise HTTPException(400, "File too large (max 20 MB)")
-    upload_headers = {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "Content-Type": file.content_type or "application/octet-stream",
-        "x-upsert": "true",
-    }
-    async with httpx.AsyncClient(timeout=30.0) as cli:
-        r = await cli.post(f"{SUPABASE_URL}/storage/v1/object/menu-images/{path}", headers=upload_headers, content=content)
-    if r.status_code >= 400:
-        raise HTTPException(502, f"Supabase storage upload failed: {r.status_code} {r.text[:300]}")
-    return {"url": f"{SUPABASE_URL}/storage/v1/object/public/menu-images/{path}"}
-
-
-# ============================================================================
-# Supabase CMS — one-time bulk seed of the legacy MongoDB menu into Supabase.
-# Protected by FastAPI admin JWT. Uses the server-only SERVICE_ROLE_KEY so it
-# bypasses RLS for this single trusted call. Idempotent on category slug + item
-# name — re-running will NOT create duplicates.
-# ============================================================================
-
-# Maps the legacy SEED.category strings → (name_fr, slug, sort_order).
-_CATEGORY_MAP = {
-    "pizzas":    ("Pizzas",    "pizzas",    1),
-    "focaccias": ("Focaccias", "focaccias", 2),
-    "gratins":   ("Gratins",   "gratins",   3),
-    "salades":   ("Salades",   "salades",   4),
-    "desserts":  ("Desserts",  "desserts",  5),
-    "boissons":  ("Boissons",  "boissons",  6),
-    "vins":      ("Vins",      "vins",      7),
-}
-
-
-def _sb_headers():
-    if not SUPABASE_URL or not SUPABASE_SERVICE_ROLE_KEY:
-        raise HTTPException(503, "Supabase not configured on server (SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY missing). See /app/SUPABASE_SETUP.md")
-    return {
-        "apikey": SUPABASE_SERVICE_ROLE_KEY,
-        "Authorization": f"Bearer {SUPABASE_SERVICE_ROLE_KEY}",
-        "Content-Type": "application/json",
-        "Prefer": "resolution=merge-duplicates,return=representation",
-    }
-
-
-@api.post("/admin/cms/seed-from-mongo")
-async def cms_seed_from_mongo(authorization: Optional[str] = Header(None)):
-    """One-shot import of SEED → Supabase categories + menu_items.
-    Requires FastAPI admin auth. Safe to call multiple times — uses upsert on
-    category slug and item (category_id, name). Returns counts.
-    """
-    await _require_admin(authorization)
-    headers = _sb_headers()
-    base = f"{SUPABASE_URL}/rest/v1"
-
-    inserted_categories = 0
-    inserted_items = 0
-
-    async with httpx.AsyncClient(timeout=30.0) as cli:
-        # 1. Upsert categories. Conflict target = slug (which is unique).
-        cat_payload = [
-            {"name": name, "slug": slug, "sort_order": order, "is_active": True}
-            for (name, slug, order) in _CATEGORY_MAP.values()
-        ]
-        r = await cli.post(
-            f"{base}/categories?on_conflict=slug",
-            headers=headers, json=cat_payload,
-        )
-        if r.status_code >= 400:
-            raise HTTPException(502, f"Supabase categories upsert failed: {r.status_code} {r.text[:300]}")
-        inserted_categories = len(r.json() or [])
-
-        # Fetch the resulting slug → id map.
-        r = await cli.get(f"{base}/categories?select=id,slug", headers=headers)
-        if r.status_code >= 400:
-            raise HTTPException(502, f"Supabase categories fetch failed: {r.text[:300]}")
-        slug_to_id = {row["slug"]: row["id"] for row in r.json()}
-
-        # 2. Upsert menu_items. We DO NOT have a unique constraint on (name) yet,
-        # so we manually check existing names per category to stay idempotent.
-        r = await cli.get(f"{base}/menu_items?select=name,category_id", headers=headers)
-        existing_pairs = set()
-        if r.status_code < 400:
-            for row in r.json():
-                existing_pairs.add((row.get("category_id"), (row.get("name") or "").strip().lower()))
-
-        items_payload = []
-        for idx, s in enumerate(SEED):
-            cat_id = slug_to_id.get(s["category"])
-            if not cat_id:
-                continue
-            key = (cat_id, s["name"].strip().lower())
-            if key in existing_pairs:
-                continue
-            # Prices: pizzas use `{26, 31}` map, others use single `price`.
-            if "prices" in s:
-                prices = {str(k): float(v) for k, v in s["prices"].items()}
-            else:
-                prices = {"default": float(s.get("price") or 0)}
-            ingredients_text = s.get("ingredients_fr") or ""
-            ingredients = [t.strip() for t in re.split(r",|·", ingredients_text) if t.strip()]
-            items_payload.append({
-                "name": s["name"],
-                "description": s.get("desc_fr") or None,
-                "ingredients": ingredients,
-                "prices": prices,
-                "image_url": s.get("image"),
-                "category_id": cat_id,
-                "sort_order": idx,
-                "is_active": True,
-            })
-
-        if items_payload:
-            r = await cli.post(f"{base}/menu_items", headers=headers, json=items_payload)
-            if r.status_code >= 400:
-                raise HTTPException(502, f"Supabase menu_items insert failed: {r.status_code} {r.text[:400]}")
-            inserted_items = len(r.json() or [])
-
-    return {
-        "ok": True,
-        "inserted_categories": inserted_categories,
-        "inserted_items": inserted_items,
-        "skipped_existing": len(SEED) - inserted_items,
-    }
+    if len(content) > max_bytes:
+        raise HTTPException(400, f"File too large (max {max_bytes // (1024 * 1024)} MB)")
+    dest = UPLOADS_DIR / rel_path
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(content)
+    return {"url": f"{PUBLIC_IMAGE_BASE}/{rel_path}"}
 
 
 app.include_router(api)
 app.add_middleware(CORSMiddleware, allow_credentials=True, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 @app.on_event("shutdown")
-async def shut(): client.close()
+async def shut():
+    client.close()
+    if pg_pool is not None:
+        await pg_pool.close()

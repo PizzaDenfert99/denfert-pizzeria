@@ -274,6 +274,7 @@ server {
 sudo ln -s /etc/nginx/sites-available/pizza-denfert /etc/nginx/sites-enabled/
 sudo nginx -t && sudo systemctl reload nginx
 
+# ⚠️ DEPRECATED — see CERTS.md in the repo root. This standalone/system-nginx approach does not apply to the current Docker-based deployment and caused a real outage on 2026-10-04.
 # TLS via Let's Encrypt
 sudo apt install -y certbot python3-certbot-nginx
 sudo certbot --nginx -d pizzadenfert.fr -d www.pizzadenfert.fr

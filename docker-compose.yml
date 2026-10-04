@@ -1,7 +1,9 @@
 # Pizza Denfert — production docker-compose for self-hosted VPS.
 #
-# Brings up 3 services on the host:
+# Brings up 4 services on the host:
 #   - mongo        : MongoDB 7 with a named volume for persistence
+#   - postgres     : Postgres 16 with a named volume — self-hosted store for
+#                    the CMS tables (categories/menu_items/restaurant_settings).
 #   - backend      : FastAPI (backend/Dockerfile) on port 8001 inside the network
 #   - nginx        : custom nginx image (nginx/Dockerfile) with an entrypoint
 #                    that self-generates placeholder certs if missing, so the
@@ -34,6 +36,31 @@ services:
     networks:
       - pizza
 
+  postgres:
+    image: postgres:16-alpine
+    container_name: pizzadenfert-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-pizzadenfert}"
+      POSTGRES_USER: "${POSTGRES_USER:-pizzadenfert}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required — generate with: openssl rand -hex 24}"
+    # NO host port binding — same rationale as mongo above. Reached by the
+    # backend via the Docker network as `postgres:5432` (see POSTGRES_HOST
+    # below).
+    expose:
+      - "5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pizzadenfert} -d ${POSTGRES_DB:-pizzadenfert}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - pizza
+
   backend:
     build:
       context: ./backend
@@ -44,14 +71,21 @@ services:
     depends_on:
       mongo:
         condition: service_healthy
+      postgres:
+        condition: service_healthy
     environment:
       # ---- Required ----
       MONGO_URL: "mongodb://mongo:27017"
       DB_NAME: "${DB_NAME:-pizzadenfert}"
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required — generate with 'openssl rand -hex 32'}"
-      # ---- Supabase (menu CMS) ----
-      SUPABASE_URL: "${SUPABASE_URL:-}"
-      SUPABASE_SERVICE_ROLE_KEY: "${SUPABASE_SERVICE_ROLE_KEY:-}"
+      # ---- Postgres (self-hosted CMS store, replaces Supabase) ----
+      POSTGRES_HOST: "postgres"
+      POSTGRES_PORT: "5432"
+      POSTGRES_DB: "${POSTGRES_DB:-pizzadenfert}"
+      POSTGRES_USER: "${POSTGRES_USER:-pizzadenfert}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}"
+      UPLOADS_DIR: "/app/uploads/menu-images"
+      PUBLIC_IMAGE_BASE: "https://api.pizzadenfert.fr/menu-images"
       # ---- Optional: SMS / OTP ----
       SMS_PROVIDER: "${SMS_PROVIDER:-}"
       OTP_DEMO_MODE: "${OTP_DEMO_MODE:-true}"
@@ -72,6 +106,8 @@ services:
     # Never publish 8001 on 0.0.0.0 — all traffic reaches the backend through Nginx.
     expose:
       - "8001"
+    volumes:
+      - uploads_data:/app/uploads
     networks:
       - pizza
 
@@ -99,6 +135,16 @@ services:
       - ./nginx/certs:/etc/nginx/certs
       # Shared with certbot for HTTP-01 ACME challenges (zero-downtime renewals).
       - certbot_webroot:/var/www/certbot
+      # Locally-hosted menu/CMS images (replaces Supabase Storage). Mounted at
+      # the same relative point as the backend's /app/uploads so the actual
+      # `menu-images/...` subdirectory lines up identically in both
+      # containers. Read-only — only the backend writes here.
+      - uploads_data:/usr/share/nginx/uploads:ro
+      # Ad-hoc distributable files (e.g. APK builds) dropped for direct
+      # download at /downloads/ — see nginx/nginx.conf. Plain host bind mount
+      # (not a named volume) so files can be dropped in directly via `cp`/
+      # `curl -o` without going through the container.
+      - ./nginx/downloads:/usr/share/nginx/downloads:ro
     networks:
       - pizza
 
@@ -121,6 +167,10 @@ services:
 
 volumes:
   mongo_data:
+    driver: local
+  postgres_data:
+    driver: local
+  uploads_data:
     driver: local
   certbot_data:
     driver: local

@@ -15,6 +15,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, Redirect } from "expo-router";
 import { Feather } from "@expo/vector-icons";
+import { VideoView, useVideoPlayer } from "expo-video";
 import { theme } from "@/src/theme";
 import { api } from "@/src/api";
 import { isLoyaltyApp } from "@/src/appMode";
@@ -27,6 +28,7 @@ type Slide = {
   title: string;
   subtitle: string;
   image_url: string;
+  media_type?: "image" | "video";
   duration_ms: number;
   active: boolean;
   // Optional per-slide style — unset on the original 14 seeded slides, which keep
@@ -34,8 +36,46 @@ type Slide = {
   background_color?: string;
   font_family?: string;
   font_color?: string;
+  // effect_type is ignored for video slides (media_type === "video") — the
+  // video already has its own motion, so we don't wrap it in a competing
+  // Ken Burns/wave/rotate/slide transform. See effectImageStyle below.
   effect_type?: "kenburns" | "wave" | "rotate" | "slide" | "fade" | "none";
 };
+
+// Looping, muted, autoplay background video for a kiosk slide. Deliberately
+// NOT wrapped in the effectImageStyle() transform used for images — a
+// looping video already has motion, so we don't compete with a Ken Burns/
+// wave/etc. transform on top of it (see the "video slides skip effect_type"
+// decision above).
+//
+// `width`/`height` are passed down as explicit numeric pixels (from the
+// kiosk's own useWindowDimensions()) rather than relying on
+// StyleSheet.absoluteFill alone. expo-video's VideoView renders a native
+// SurfaceView/TextureView-backed layer (a real HTML <video> on web too), and
+// those don't reliably pick up a percentage/inset-only ("position:absolute,
+// top/left/right/bottom:0") box the way a plain Image/View does — nested
+// several Animated.View layers deep, that was producing a video surface
+// measured/sized far smaller than its container, which cropped it down to
+// what looked like only a corner of the frame being visible. Explicit
+// pixel width/height avoids that measurement gap.
+function KioskVideoBackground({ uri, resizeMode, width, height }: {
+  uri: string; resizeMode: "cover" | "contain"; width: number; height: number;
+}) {
+  const player = useVideoPlayer(uri, (p) => {
+    p.loop = true;
+    p.muted = true;
+    p.play();
+  });
+  return (
+    <VideoView
+      player={player}
+      style={{ position: "absolute", top: 0, left: 0, width, height }}
+      contentFit={resizeMode}
+      nativeControls={false}
+      pointerEvents="none"
+    />
+  );
+}
 
 // ── Per-slide motion effects ─────────────────────────────────────────────────
 // `progress` is an Animated.Value driven linearly from 0 -> 1 over the slide's
@@ -129,6 +169,22 @@ function Kiosk() {
     })();
   }, []);
 
+  // ── Prefetch every slide image up front ──────────────────────────────────────
+  // The crossfade below swaps a single <Image>'s `source` mid-transition rather
+  // than mounting a second layer, so if the next slide's image hasn't finished
+  // loading/decoding by the time the fade-in starts, the still-loading (or
+  // stale, not-yet-replaced) frame briefly shows through — the "flash of wrong
+  // content" bug. There's a small, fixed, looping set of slides, so warming the
+  // image cache for all of them once, as soon as the list loads, means every
+  // future transition swaps to an already-decoded image with nothing to wait
+  // on. (Video slides aren't prefetchable the same way — no-op for those.)
+  useEffect(() => {
+    const urls = Array.from(new Set(
+      slides.filter((sl) => sl.media_type !== "video" && sl.image_url).map((sl) => sl.image_url)
+    ));
+    urls.forEach((u) => { Image.prefetch(u).catch(() => {}); });
+  }, [slides]);
+
   // ── Animate text in ──────────────────────────────────────────────────────────
   const animIn = useCallback((sec: string) => {
     const meta = SECTION_META[sec] || { overlay: false };
@@ -154,11 +210,19 @@ function Kiosk() {
     clearTimeout(timer.current);
     timer.current = setTimeout(() => {
       const next = (idx + 1) % slides.length;
-      // Cross-fade image
-      Animated.timing(imgOpacity, { toValue: 0, duration: 500, useNativeDriver: true }).start(() => {
+      // Slow cross-fade: fade the current slide fully out, swap the source
+      // while nothing is visible (imgOpacity === 0), then fade the next
+      // slide in. The brief hold at zero opacity is a small extra safety
+      // margin on top of the prefetching above — it gives the swapped
+      // <Image> a moment to actually apply the new (already-cached) source
+      // before anything starts becoming visible again.
+      Animated.timing(imgOpacity, { toValue: 0, duration: 900, useNativeDriver: true }).start(() => {
         setIndex(next);
         animIn(slides[next]?.section || "");
-        Animated.timing(imgOpacity, { toValue: 1, duration: 500, useNativeDriver: true }).start();
+        Animated.sequence([
+          Animated.delay(80),
+          Animated.timing(imgOpacity, { toValue: 1, duration: 900, useNativeDriver: true }),
+        ]).start();
         scheduleNext(next, slides[next]?.duration_ms || settings?.default_duration_ms || 5000);
       });
     }, dur);
@@ -177,6 +241,9 @@ function Kiosk() {
   useEffect(() => {
     if (!slides.length) return;
     effectRun.current?.stop();
+    // Video slides never apply effect_type (see KioskVideoBackground) — skip
+    // running the progress animation for them entirely.
+    if (slides[index]?.media_type === "video") return;
     const dur = slides[index]?.duration_ms || settings?.default_duration_ms || 5000;
     effectProgress.setValue(0);
     effectRun.current = Animated.timing(effectProgress, { toValue: 1, duration: dur, easing: Easing.linear, useNativeDriver: true });
@@ -219,13 +286,22 @@ function Kiosk() {
             {!!cur.background_color && (
               <View style={[StyleSheet.absoluteFill, { backgroundColor: cur.background_color }]} />
             )}
-            <Animated.View style={[StyleSheet.absoluteFill, effectImageStyle(cur.effect_type, effectProgress)]}>
-              <Image
-                source={{ uri: cur.image_url }}
-                style={StyleSheet.absoluteFill}
+            {cur.media_type === "video" ? (
+              <KioskVideoBackground
+                uri={cur.image_url}
                 resizeMode={cur.section === "loyalty" ? "contain" : "cover"}
+                width={width}
+                height={height}
               />
-            </Animated.View>
+            ) : (
+              <Animated.View style={[StyleSheet.absoluteFill, effectImageStyle(cur.effect_type, effectProgress)]}>
+                <Image
+                  source={{ uri: cur.image_url }}
+                  style={StyleSheet.absoluteFill}
+                  resizeMode={cur.section === "loyalty" ? "contain" : "cover"}
+                />
+              </Animated.View>
+            )}
             {/* Subtle color wash tying the photo to the chosen background_color */}
             {!!cur.background_color && (
               <View style={[StyleSheet.absoluteFill, { backgroundColor: cur.background_color, opacity: 0.12 }]} />
@@ -293,9 +369,22 @@ function Kiosk() {
         </View>
       )}
 
-      {/* For loyalty section (promos) — show centered title if no image */}
-      {!meta.overlay && !cur.image_url && (
+      {/* For loyalty section (promos) — centered title/subtitle, styled with the
+          slide's font_family/font_color. Previously gated behind `!cur.image_url`,
+          which meant ANY loyalty slide with a background image never showed its
+          caption (or any font/color styling) at all — the realistic case, since
+          admins normally attach an image. Now always shown for this section,
+          with a scrim behind the text when there's a background image so it
+          stays legible over a bright photo. */}
+      {!meta.overlay && (
         <View style={s.promoCenter}>
+          {!!cur.image_url && (
+            <LinearGradient
+              colors={["transparent", "rgba(0,0,0,0.35)", "rgba(0,0,0,0.7)"]}
+              locations={[0, 0.55, 1]}
+              style={StyleSheet.absoluteFill}
+            />
+          )}
           <Text style={[s.promoTitle, !!cur.font_family && { fontFamily: cur.font_family }, !!cur.font_color && { color: cur.font_color }]}>
             {cur.title}
           </Text>

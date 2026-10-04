@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback, useRef } from "react";
-import { Animated, View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Platform, KeyboardAvoidingView, RefreshControl, AppState } from "react-native";
+import { Animated, View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Platform, KeyboardAvoidingView, RefreshControl, AppState, BackHandler } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -18,8 +18,8 @@ import { ParallaxBackground } from "@/src/ParallaxBackground";
 import { useBackgroundImage } from "@/src/hooks/use-background-image";
 
 // Discreet lock icon only shown on the loyalty-tablet APK when the user is
-// already signed in. The unauthenticated /account view already exposes a
-// pre-existing "Accès admin / Staff" button visible to all visitors. This
+// already signed in. The unauthenticated /account view has its own always-
+// visible "Accès Staff" button (see StaffAccessButton below) — this
 // loyalty-only icon covers the logged-in case so staff can dive straight
 // into the QR scanner / loyalty admin without signing out.
 function LoyaltyStaffIcon() {
@@ -40,6 +40,26 @@ function LoyaltyStaffIcon() {
       ]}
     >
       <Feather name="lock" size={14} color={theme.color.brand} />
+    </Pressable>
+  );
+}
+
+// Always-visible admin/staff entry point on the unauthenticated /account
+// view (loyalty-tablet APK only — see isLoyaltyApp()). Independent of the
+// phone/OTP loyalty-card registration flow below it: staff must be able to
+// reach /admin without registering a loyalty card first.
+function StaffAccessButton() {
+  const router = useRouter();
+  const { lang } = useI18n();
+  if (!isLoyaltyApp()) return null;
+  return (
+    <Pressable
+      testID="staff-access-btn"
+      onPress={() => router.push("/admin" as any)}
+      style={styles.staffAccessBtn}
+    >
+      <Feather name="lock" size={12} color={theme.color.brand} />
+      <Text style={styles.staffAccessTxt}>{lang === "fr" ? "ACCÈS STAFF" : "STAFF ACCESS"}</Text>
     </Pressable>
   );
 }
@@ -74,6 +94,25 @@ export default function Account() {
   const [reservations, setReservations] = useState<any[]>([]);
   const [refreshing, setRefreshing] = useState(false);
   const [tab, setTab] = useState<"rewards" | "history" | "reservations">("rewards");
+
+  // On the loyalty tablet's unauthenticated home screen, this route is
+  // usually reached via router.replace() (from /kiosk's tap-to-return, or
+  // the idle-watcher's redirect), which leaves little/no real "back" target
+  // in the navigation stack. Android's hardware back button then falls
+  // through to Expo Router's Stack+Tabs default handling, which — for this
+  // replace()-heavy navigation shape — was landing on a blank white screen
+  // instead of either popping cleanly or exiting the app. This is also a
+  // kiosk sitting unattended in the restaurant: swallowing back here (rather
+  // than letting a customer accidentally exit the app) is the right call
+  // regardless of the underlying navigation bug. Only intercepts on the
+  // loyalty build's unauthenticated screen — every other screen/app variant
+  // keeps normal back behavior.
+  useEffect(() => {
+    if (Platform.OS !== "android") return;
+    if (!isLoyaltyApp() || user) return;
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => true);
+    return () => sub.remove();
+  }, [user]);
 
   const load = useCallback(async () => {
     if (!user) return;
@@ -182,6 +221,7 @@ export default function Account() {
                 <Feather name="globe" size={12} color={theme.color.brand} />
                 <Text style={styles.langTxt}>{lang.toUpperCase()}</Text>
               </Pressable>
+              <StaffAccessButton />
               <View style={{ marginTop: theme.space.xxl, marginBottom: theme.space.xl, alignItems: "center" }}>
                 <Text style={styles.eyebrow}>— {lang === "fr" ? "FIDÉLITÉ CLIENT" : "CUSTOMER LOYALTY"}</Text>
                 <Text style={[styles.bigTitle, { textAlign: "center" }]}>{lang === "fr" ? "Carte\nfidélité VIP" : "VIP\nLoyalty card"}</Text>

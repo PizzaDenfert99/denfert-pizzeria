@@ -1,6 +1,36 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { Platform } from "react-native";
 
+// Shapes returned by the CMS menu endpoints below (self-hosted Postgres,
+// see backend/db/init.sql).
+export type Category = {
+  id: string;
+  name: string;
+  slug: string;
+  sort_order: number;
+  is_active: boolean;
+};
+
+export type MenuItem = {
+  id: string;
+  name: string;
+  description: string | null;
+  ingredients: string[];
+  prices: Record<string, number>;
+  image_url: string | null;
+  thumbnail_url: string | null;
+  category_id: string | null;
+  sort_order: number;
+  is_active: boolean;
+};
+
+export type RestaurantSettings = {
+  id: string;
+  opening_hours: Record<string, string>;
+  phone: string | null;
+  address: string | null;
+};
+
 // Choose the correct backend per environment:
 //  - Production browsers on the Hetzner-served domains hit `https://api.pizzadenfert.fr`
 //  - Everywhere else (Emergent dev preview, native dev/release) uses `EXPO_PUBLIC_BACKEND_URL`
@@ -8,7 +38,7 @@ const ENV_BASE = process.env.EXPO_PUBLIC_BACKEND_URL || "";
 let BASE = ENV_BASE;
 if (Platform.OS === "web" && typeof window !== "undefined" && window.location?.hostname) {
   const host = window.location.hostname;
-  if (host === "pizzadenfert.fr" || host === "www.pizzadenfert.fr" || host === "admin.pizzadenfert.fr") {
+  if (host === "pizzadenfert.fr" || host === "www.pizzadenfert.fr" || host === "admin.pizzadenfert.fr" || host === "loyalty.pizzadenfert.fr") {
     BASE = "https://api.pizzadenfert.fr";
   }
 }
@@ -51,7 +81,7 @@ export const api = {
   me: () => req("/auth/me"),
   logout: () => req("/auth/logout", { method: "POST" }),
   menu: () => req("/menu"),
-  // CMS menu (Supabase-backed), proxied server-side — no Supabase creds on the client.
+  // CMS menu (self-hosted Postgres), proxied server-side.
   publicCategories: () => req("/public/categories"),
   publicMenuItems: () => req("/public/menu-items"),
   publicRestaurantSettings: () => req("/public/restaurant-settings"),
@@ -108,7 +138,7 @@ export const api = {
   // Kiosk / Advertising Management
   publicAdSlides: () => req("/ads/slides"),
   adminListAdSlides: () => req("/admin/ads/slides"),
-  adminCreateAdSlide: (data: { section: "loyalty"|"experience"|"ingredients"; title: string; subtitle?: string; image_url?: string; duration_ms?: number; active?: boolean; order?: number }) =>
+  adminCreateAdSlide: (data: { section: "loyalty"|"experience"|"ingredients"; title: string; subtitle?: string; image_url?: string; duration_ms?: number; active?: boolean; order?: number; background_color?: string; font_family?: string; font_color?: string; effect_type?: string }) =>
     req("/admin/ads/slides", { method: "POST", body: JSON.stringify(data) }),
   adminUpdateAdSlide: (id: string, patch: any) =>
     req(`/admin/ads/slides/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
@@ -119,9 +149,8 @@ export const api = {
   adminGetKioskSettings: () => req("/admin/ads/settings"),
   adminUpdateKioskSettings: (patch: { idle_seconds?: number; loop?: boolean; default_duration_ms?: number; show_section_titles?: boolean }) =>
     req("/admin/ads/settings", { method: "PUT", body: JSON.stringify(patch) }),
-  // Admin CMS (Supabase-backed categories/menu_items/restaurant_settings) — proxied
-  // server-side with the service-role key, protected by the same admin JWT as everything
-  // else above (no separate Supabase Auth session).
+  // Admin CMS (self-hosted Postgres categories/menu_items/restaurant_settings),
+  // protected by the same admin JWT as everything else above.
   adminCmsListCategories: () => req("/admin/cms/categories"),
   adminCmsCreateCategory: (data: { name: string; slug: string; sort_order?: number; is_active?: boolean }) =>
     req("/admin/cms/categories", { method: "POST", body: JSON.stringify(data) }),
@@ -136,7 +165,6 @@ export const api = {
     req(`/admin/cms/menu-items/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
   adminCmsDeleteMenuItem: (id: string) =>
     req(`/admin/cms/menu-items/${encodeURIComponent(id)}`, { method: "DELETE" }),
-  adminCmsSeedFromMongo: () => req("/admin/cms/seed-from-mongo", { method: "POST" }),
   adminCmsGetSettings: () => req("/admin/cms/restaurant-settings"),
   adminCmsUpdateSettings: (id: string, patch: any) =>
     req(`/admin/cms/restaurant-settings/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify(patch) }),
@@ -144,10 +172,12 @@ export const api = {
     itemId: string,
     file: { name: string; type: string; blob?: Blob } & Partial<Blob>,
     kind: "original" | "thumb" = "original",
+    folder: string = "menu_items",
   ): Promise<{ url: string }> => {
     const form = new FormData();
     form.append("item_id", itemId);
     form.append("kind", kind);
+    form.append("folder", folder);
     form.append("file", (file.blob || (file as any)) as any, file.name);
     const tok = await loadToken();
     const headers: any = {};

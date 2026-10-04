@@ -44,6 +44,8 @@ the anon key into `SUPABASE_ANON_KEY`.
 
 ### 3. Obtain TLS certificates
 
+> **⚠️ DEPRECATED — see [CERTS.md](./CERTS.md).** The standalone/host-certbot steps below do NOT work on this host (Nginx runs only in Docker) and caused a real outage on 2026-10-04. Use scripts/cert-issue.sh / scripts/cert-renew.sh instead.
+
 Stop anything binding to port 80 first, then use Certbot in standalone mode
 (one-shot). We do NOT run Certbot inside a container to keep the setup
 minimal — renewal is a monthly cron/systemd-timer job.

@@ -22,7 +22,6 @@ export default function CmsDashboard() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [editing, setEditing] = useState<any>(null); // item being edited
   const [editingCat, setEditingCat] = useState<any>(null);
-  const [importing, setImporting] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(null), 2500); };
@@ -48,17 +47,6 @@ export default function CmsDashboard() {
   }, [user, loading, router, loadAll]);
 
   const signOut = async () => { await authSignOut(); router.replace("/admin-cms"); };
-
-  const importSeed = async () => {
-    setImporting(true);
-    try {
-      const out = await api.adminCmsSeedFromMongo();
-      showToast(`Importé : ${out.inserted_items} pizzas, ${out.inserted_categories} catégories`);
-      await loadAll();
-    } catch (e: any) {
-      Alert.alert("Erreur", e?.message || "Import failed");
-    } finally { setImporting(false); }
-  };
 
   const upsertItem = async (it: any) => {
     setSavingId(it.id || "new");
@@ -245,13 +233,8 @@ export default function CmsDashboard() {
                   <Feather name="plus" size={14} color={theme.color.onBrandPrimary} />
                   <Text style={s.primaryBtnTxt}>Nouveau plat</Text>
                 </Pressable>
-                {items.length === 0 && (
-                  <Pressable testID="import-seed" onPress={importSeed} disabled={importing} style={s.secondaryBtn}>
-                    {importing ? <ActivityIndicator size="small" color={theme.color.brand} /> : <><Feather name="download" size={14} color={theme.color.brand} /><Text style={s.secondaryBtnTxt}>Importer la carte initiale</Text></>}
-                  </Pressable>
-                )}
               </View>
-              {items.length === 0 && <Text style={s.empty}>Aucun plat. Créez-en un ou utilisez l&apos;import.</Text>}
+              {items.length === 0 && <Text style={s.empty}>Aucun plat. Créez-en un.</Text>}
               {items.map((it) => {
                 const cat = cats.find((c) => c.id === it.category_id);
                 return (
