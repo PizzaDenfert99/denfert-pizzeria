@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from "react";
-import { Animated, View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
+import { AccessibilityInfo, Animated, Easing, View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, KeyboardAvoidingView, Platform } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Image } from "expo-image";
 import { LinearGradient } from "expo-linear-gradient";
@@ -30,6 +30,168 @@ function nextDays(n: number) {
 
 type ZoneAvail = { capacity: number; booked: number; available: number; full: boolean; tables_total?: number; tables_free?: number };
 type Availability = { zones: { indoor: ZoneAvail; terrace: ZoneAvail } };
+
+const WAIT_COLOR = "#F39C12";
+const DAYS_LONG = {
+  fr: ["Dimanche", "Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"],
+  en: ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"],
+};
+const MONTHS_LONG = {
+  fr: ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre", "novembre", "décembre"],
+  en: ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
+};
+
+function formatLongDate(iso: string, lang: string) {
+  const [y, m, d] = iso.split("-").map(Number);
+  if (!y || !m || !d) return iso;
+  const dt = new Date(y, m - 1, d);
+  return lang === "fr"
+    ? `${DAYS_LONG.fr[dt.getDay()]} ${d} ${MONTHS_LONG.fr[m - 1]}`
+    : `${DAYS_LONG.en[dt.getDay()]}, ${MONTHS_LONG.en[m - 1]} ${d}`;
+}
+
+type SuccessProps = {
+  status: "confirmed" | "pending";
+  tableNo: string | null;
+  date: string;
+  time: string;
+  guests: number;
+  zone: "indoor" | "terrace";
+  onBackHome: () => void;
+};
+
+function ReservationSuccess({ status, tableNo, date, time, guests, zone, onBackHome }: SuccessProps) {
+  const { t, lang } = useI18n();
+  const fr = lang === "fr";
+  const isWait = status === "pending";
+  const accent = isWait ? WAIT_COLOR : theme.color.brand;
+
+  const badge = useRef(new Animated.Value(0)).current;
+  const pulse = useRef(new Animated.Value(0)).current;
+  const heading = useRef(new Animated.Value(0)).current;
+  const card = useRef(new Animated.Value(0)).current;
+  const action = useRef(new Animated.Value(0)).current;
+
+  useEffect(() => {
+    let alive = true;
+    const all = [badge, heading, card, action];
+    const fadeUp = (v: Animated.Value) =>
+      Animated.timing(v, { toValue: 1, duration: 320, easing: Easing.out(Easing.cubic), useNativeDriver: true });
+    const run = (reduceMotion: boolean) => {
+      if (!alive) return;
+      if (reduceMotion) { all.forEach((v) => v.setValue(1)); return; }
+      Animated.parallel([
+        Animated.spring(badge, { toValue: 1, friction: 6, tension: 70, useNativeDriver: true }),
+        Animated.sequence([
+          Animated.delay(250),
+          Animated.timing(pulse, { toValue: 1, duration: 700, easing: Easing.out(Easing.quad), useNativeDriver: true }),
+          Animated.timing(pulse, { toValue: 0, duration: 700, easing: Easing.inOut(Easing.quad), useNativeDriver: true }),
+        ]),
+        Animated.sequence([Animated.delay(150), Animated.stagger(110, [heading, card, action].map(fadeUp))]),
+      ]).start();
+    };
+    AccessibilityInfo.isReduceMotionEnabled().then(run).catch(() => run(false));
+    return () => { alive = false; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const rise = (v: Animated.Value) => ({
+    opacity: v,
+    transform: [{ translateY: v.interpolate({ inputRange: [0, 1], outputRange: [12, 0] }) }],
+  });
+
+  const rows: { key: string; icon: string; label: string; value: string }[] = [
+    { key: "date", icon: "calendar", label: t("date"), value: formatLongDate(date, lang) },
+    { key: "time", icon: "clock", label: t("time"), value: time },
+    {
+      key: "guests", icon: "users", label: t("guests"),
+      value: `${guests} ${fr ? (guests > 1 ? "personnes" : "personne") : (guests > 1 ? "guests" : "guest")}`,
+    },
+    {
+      key: "zone", icon: zone === "indoor" ? "home" : "sun", label: "Zone",
+      value: zone === "indoor" ? (fr ? "Intérieur" : "Indoor") : (fr ? "Terrasse" : "Terrace"),
+    },
+  ];
+  const showTable = !!tableNo || isWait;
+
+  return (
+    <View testID="reserve-success" style={styles.container}>
+      <SafeAreaView edges={["top"]} style={{ flex: 1 }}>
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.successScroll}>
+          <View style={styles.successInner}>
+            <View style={styles.badgeWrap}>
+              <Animated.View
+                style={[styles.haloOuter, { backgroundColor: accent, opacity: badge.interpolate({ inputRange: [0, 1], outputRange: [0, 0.08] }), transform: [{ scale: Animated.add(badge, Animated.multiply(pulse, 0.12)) }] }]}
+              />
+              <Animated.View
+                style={[styles.haloInner, { backgroundColor: accent, opacity: badge.interpolate({ inputRange: [0, 1], outputRange: [0, 0.16] }), transform: [{ scale: badge }] }]}
+              />
+              <Animated.View
+                style={[styles.checkCircle, { backgroundColor: accent, shadowColor: accent, opacity: badge.interpolate({ inputRange: [0, 0.5, 1], outputRange: [0, 1, 1] }), transform: [{ scale: badge.interpolate({ inputRange: [0, 1], outputRange: [0.6, 1] }) }] }]}
+              >
+                <Feather name={isWait ? "clock" : "check"} size={32} color={theme.color.onBrandPrimary} />
+              </Animated.View>
+            </View>
+
+            <Animated.View style={[{ alignItems: "center" }, rise(heading)]}>
+              <Text style={[styles.eyebrow, { color: accent, marginTop: theme.space.xl }]}>— RÉSERVATION</Text>
+              <Text style={[styles.title, { textAlign: "center" }]}>
+                {isWait ? (fr ? "En liste d'attente" : "Waiting list") : t("reservationConfirmed")}
+              </Text>
+              <Text style={[styles.body, styles.successSub]}>
+                {isWait
+                  ? (fr
+                    ? "Toutes les tables sont prises pour ce créneau. Vous serez confirmé(e) automatiquement dès qu'une table se libère."
+                    : "All tables are taken for this slot. You'll be automatically confirmed as soon as a table opens up.")
+                  : t("seeYou")}
+              </Text>
+            </Animated.View>
+
+            <Animated.View testID="reservation-details-card" style={[styles.detailCard, rise(card)]}>
+              <View style={[styles.detailAccent, { backgroundColor: accent }]} />
+              {rows.map((r, i) => (
+                <View key={r.key} style={[styles.detailRow, i > 0 && styles.detailDivider]}>
+                  <View style={[styles.zoneIcon, { borderColor: accent }]}>
+                    <Feather name={r.icon as any} size={16} color={accent} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.detailLabel}>{r.label.toUpperCase()}</Text>
+                    <Text style={styles.detailValue}>{r.value}</Text>
+                  </View>
+                </View>
+              ))}
+              {showTable && (
+                <View style={[styles.detailRow, styles.detailDivider]}>
+                  <View style={[styles.zoneIcon, { borderColor: accent }]}>
+                    <Feather name="hash" size={16} color={accent} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={styles.detailLabel}>TABLE</Text>
+                    {!tableNo && (
+                      <Text style={[styles.detailValue, { color: theme.color.onSurfaceTertiary }]}>
+                        {fr ? "En attente d'attribution" : "Awaiting assignment"}
+                      </Text>
+                    )}
+                  </View>
+                  {!!tableNo && (
+                    <View style={[styles.tablePill, { borderColor: accent }]}>
+                      <Text style={[styles.tablePillTxt, { color: accent }]}>{tableNo}</Text>
+                    </View>
+                  )}
+                </View>
+              )}
+            </Animated.View>
+
+            <Animated.View style={[{ alignSelf: "stretch" }, rise(action)]}>
+              <Pressable testID="back-home-btn" onPress={onBackHome} style={[styles.submit, { marginTop: theme.space.xxl }]}>
+                <Text style={styles.submitTxt}>{t("backHome").toUpperCase()}</Text>
+              </Pressable>
+            </Animated.View>
+          </View>
+        </ScrollView>
+      </SafeAreaView>
+    </View>
+  );
+}
 
 export default function Reserve() {
   const { t, lang } = useI18n();
@@ -94,34 +256,16 @@ export default function Reserve() {
   };
 
   if (done) {
-    const isWait = done.status === "pending";
     return (
-      <View style={styles.container}>
-        <SafeAreaView style={{ flex: 1, alignItems: "center", justifyContent: "center", padding: theme.space.xl }}>
-          <View style={[styles.checkCircle, isWait && { backgroundColor: "#F39C12" }]}>
-            <Feather name={isWait ? "clock" : "check"} size={32} color={theme.color.onBrandPrimary} />
-          </View>
-          <Text style={[styles.title, { marginTop: theme.space.xl, textAlign: "center" }]}>
-            {isWait
-              ? (lang === "fr" ? "En liste d'attente" : "Waiting list")
-              : t("reservationConfirmed")}
-          </Text>
-          <Text style={[styles.body, { textAlign: "center", marginTop: theme.space.md }]}>
-            {isWait
-              ? (lang === "fr"
-                ? "Toutes les tables sont prises pour ce créneau. Vous serez confirmé(e) automatiquement dès qu'une table se libère."
-                : "All tables are taken for this slot. You'll be automatically confirmed as soon as a table opens up.")
-              : t("seeYou")}
-          </Text>
-          <Text style={[styles.body, { textAlign: "center", color: theme.color.brand, marginTop: theme.space.lg }]}>
-            {date} · {time} · {guests} {lang === "fr" ? "convives" : "guests"} · {zone === "indoor" ? (lang === "fr" ? "Intérieur" : "Indoor") : (lang === "fr" ? "Terrasse" : "Terrace")}
-            {done.table_no ? ` · ${lang === "fr" ? "Table" : "Table"} ${done.table_no}` : ""}
-          </Text>
-          <Pressable testID="back-home-btn" onPress={() => { setDone(null); router.replace("/(tabs)"); }} style={[styles.submit, { marginTop: theme.space.xxl }]}>
-            <Text style={styles.submitTxt}>{t("backHome")}</Text>
-          </Pressable>
-        </SafeAreaView>
-      </View>
+      <ReservationSuccess
+        status={done.status}
+        tableNo={done.table_no}
+        date={date}
+        time={time}
+        guests={guests}
+        zone={zone}
+        onBackHome={() => { setDone(null); router.replace("/(tabs)"); }}
+      />
     );
   }
 
@@ -299,5 +443,19 @@ const styles = StyleSheet.create({
   err: { color: theme.color.error, fontSize: 13, marginTop: theme.space.md, textAlign: "center" },
   submit: { height: 54, borderRadius: theme.radius.md, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center", marginTop: theme.space.xl },
   submitTxt: { color: theme.color.onBrandPrimary, fontSize: 14, fontWeight: "700", letterSpacing: 1 },
-  checkCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center" },
+  successScroll: { flexGrow: 1, alignItems: "center", paddingHorizontal: theme.space.xl, paddingTop: theme.space.xxl, paddingBottom: 140 },
+  successInner: { width: "100%", maxWidth: 440, alignItems: "center" },
+  successSub: { textAlign: "center", marginTop: theme.space.md, color: theme.color.onSurfaceTertiary, lineHeight: 22 },
+  badgeWrap: { width: 148, height: 148, alignItems: "center", justifyContent: "center" },
+  haloOuter: { position: "absolute", width: 148, height: 148, borderRadius: 74 },
+  haloInner: { position: "absolute", width: 112, height: 112, borderRadius: 56 },
+  checkCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: theme.color.brand, alignItems: "center", justifyContent: "center", shadowOpacity: 0.45, shadowRadius: 18, shadowOffset: { width: 0, height: 0 }, elevation: 8 },
+  detailCard: { alignSelf: "stretch", marginTop: theme.space.xxl, paddingHorizontal: theme.space.lg, borderRadius: theme.radius.md, borderWidth: 1, borderColor: theme.color.border, backgroundColor: theme.color.surfaceSecondary, overflow: "hidden" },
+  detailAccent: { position: "absolute", top: 0, left: 0, right: 0, height: 2, opacity: 0.8 },
+  detailRow: { flexDirection: "row", alignItems: "center", gap: 14, paddingVertical: 14 },
+  detailDivider: { borderTopWidth: 1, borderTopColor: theme.color.border },
+  detailLabel: { color: theme.color.muted, fontSize: 10, letterSpacing: 2, fontWeight: "700" },
+  detailValue: { color: theme.color.onSurface, fontSize: 16, fontWeight: "500", marginTop: 3 },
+  tablePill: { minWidth: 44, height: 32, paddingHorizontal: 12, borderRadius: theme.radius.pill, borderWidth: 1, backgroundColor: "rgba(212,175,55,0.1)", alignItems: "center", justifyContent: "center" },
+  tablePillTxt: { fontSize: 15, fontWeight: "700", letterSpacing: 0.5 },
 });
