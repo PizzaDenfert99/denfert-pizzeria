@@ -15,7 +15,7 @@ import {
 import { LinearGradient } from "expo-linear-gradient";
 import { useRouter, Redirect } from "expo-router";
 import { Feather } from "@expo/vector-icons";
-import { VideoView, useVideoPlayer } from "expo-video";
+import { VideoView, useVideoPlayer } from "@/src/safeVideo";
 import { theme } from "@/src/theme";
 import { api } from "@/src/api";
 import { isLoyaltyApp } from "@/src/appMode";

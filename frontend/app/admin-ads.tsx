@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, Pressable, ScrollView, TextInput, ActivityIndic
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useRouter, Redirect } from "expo-router";
-import { VideoView, useVideoPlayer } from "expo-video";
+import { VideoView, useVideoPlayer } from "@/src/safeVideo";
 import { useAuth } from "@/src/auth-context";
 import { useI18n } from "@/src/i18n";
 import { api } from "@/src/api";
