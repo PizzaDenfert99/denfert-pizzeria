@@ -2,7 +2,7 @@ from fastapi import FastAPI, APIRouter, HTTPException, Header, File, Form, Uploa
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
 from motor.motor_asyncio import AsyncIOMotorClient
-import os, logging, uuid, secrets, re
+import os, logging, uuid, secrets, re, unicodedata
 from pathlib import Path
 from pydantic import BaseModel, Field, EmailStr
 from typing import List, Optional
@@ -1975,9 +1975,12 @@ async def public_categories():
 async def public_menu_items():
     async with pg_pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, name, description, ingredients, prices, image_url, thumbnail_url, "
-            "category_id, sort_order FROM menu_items "
-            "WHERE is_active = true ORDER BY sort_order ASC"
+            # Only items in a visible category: clients map items to chips by
+            # category_id, and older app builds drop unmatched items into "Pizzas".
+            "SELECT m.id, m.name, m.description, m.ingredients, m.prices, m.image_url, m.thumbnail_url, "
+            "m.category_id, m.sort_order FROM menu_items m "
+            "JOIN categories c ON c.id = m.category_id AND c.is_active = true "
+            "WHERE m.is_active = true ORDER BY m.sort_order ASC"
         )
     return _pg_rows(rows)
 
@@ -2004,7 +2007,7 @@ async def public_restaurant_settings():
 
 class CmsCategoryIn(BaseModel):
     name: str
-    slug: str
+    slug: Optional[str] = None  # derived from the name when omitted
     sort_order: Optional[int] = 0
     is_active: Optional[bool] = True
 
@@ -2053,22 +2056,56 @@ class CmsSettingsUpdate(BaseModel):
 
 
 # ---- Categories ----
+def _slugify(value: str) -> str:
+    """'Salades & Antipasti' -> 'salades-antipasti' (accents stripped, URL-safe)."""
+    ascii_ = unicodedata.normalize("NFKD", value or "").encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "-", ascii_.lower()).strip("-")
+
+
+def _clean_category_fields(payload: dict) -> dict:
+    """Trim/normalise the name and slug of a category payload (in place)."""
+    if "name" in payload:
+        payload["name"] = payload["name"].strip()
+        if not payload["name"]:
+            raise HTTPException(400, "Le nom de la catégorie est obligatoire")
+    if "slug" in payload:
+        payload["slug"] = _slugify(payload["slug"])
+        if not payload["slug"]:
+            raise HTTPException(400, "Slug invalide (lettres, chiffres et tirets uniquement)")
+    return payload
+
+
+_SLUG_TAKEN = "Ce slug est déjà utilisé par une autre catégorie"
+
+
 @api.get("/admin/cms/categories")
 async def admin_cms_list_categories(authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)
     async with pg_pool.acquire() as conn:
-        rows = await conn.fetch("SELECT * FROM categories ORDER BY sort_order ASC")
+        rows = await conn.fetch("SELECT * FROM categories ORDER BY sort_order ASC, name ASC")
     return _pg_rows(rows)
 
 
 @api.post("/admin/cms/categories", status_code=201)
 async def admin_cms_create_category(b: CmsCategoryIn, authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)
+    payload = _clean_category_fields({"name": b.name, **({"slug": b.slug} if b.slug else {})})
     async with pg_pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "INSERT INTO categories (name, slug, sort_order, is_active) VALUES ($1,$2,$3,$4) RETURNING *",
-            b.name, b.slug, b.sort_order or 0, b.is_active if b.is_active is not None else True,
-        )
+        slug = payload.get("slug")
+        if not slug:
+            # Auto slug from the name; suffix -2, -3… if that one is taken.
+            base = _slugify(payload["name"]) or "categorie"
+            taken = {r["slug"] for r in await conn.fetch("SELECT slug FROM categories")}
+            slug, n = base, 2
+            while slug in taken:
+                slug, n = f"{base}-{n}", n + 1
+        try:
+            row = await conn.fetchrow(
+                "INSERT INTO categories (name, slug, sort_order, is_active) VALUES ($1,$2,$3,$4) RETURNING *",
+                payload["name"], slug, b.sort_order or 0, b.is_active if b.is_active is not None else True,
+            )
+        except asyncpg.UniqueViolationError:
+            raise HTTPException(409, _SLUG_TAKEN)
     return _pg_row(row)
 
 
@@ -2078,10 +2115,13 @@ async def admin_cms_update_category(cat_id: str, b: CmsCategoryUpdate, authoriza
     payload = {k: v for k, v in b.model_dump().items() if v is not None}
     if not payload:
         raise HTTPException(400, "No fields to update")
+    _clean_category_fields(payload)
     sql, params = _build_update("categories", payload)
     try:
         async with pg_pool.acquire() as conn:
             row = await conn.fetchrow(sql, cat_id, *params)
+    except asyncpg.UniqueViolationError:
+        raise HTTPException(409, _SLUG_TAKEN)
     except (asyncpg.DataError, ValueError):
         raise HTTPException(404, "Category not found")
     if row is None:
@@ -2093,13 +2133,16 @@ async def admin_cms_update_category(cat_id: str, b: CmsCategoryUpdate, authoriza
 async def admin_cms_delete_category(cat_id: str, authorization: Optional[str] = Header(None)):
     await _require_admin(authorization)
     try:
-        async with pg_pool.acquire() as conn:
+        async with pg_pool.acquire() as conn, conn.transaction():
+            # menu_items.category_id is ON DELETE SET NULL: the items survive but
+            # become uncategorised (hidden from customers until reassigned).
+            detached = await conn.fetchval("SELECT count(*) FROM menu_items WHERE category_id = $1", cat_id)
             row = await conn.fetchrow("DELETE FROM categories WHERE id = $1 RETURNING id", cat_id)
     except (asyncpg.DataError, ValueError):
         raise HTTPException(404, "Category not found")
     if row is None:
         raise HTTPException(404, "Category not found")
-    return {"deleted": True}
+    return {"deleted": True, "detached_items": detached}
 
 
 # ---- Menu items ----

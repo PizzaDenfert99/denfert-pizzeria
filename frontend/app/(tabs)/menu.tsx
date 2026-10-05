@@ -3,7 +3,7 @@ import { Animated, View, Text, StyleSheet, ScrollView, ActivityIndicator, Pressa
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useFocusEffect } from "expo-router";
 import { Image } from "expo-image";
-import { useI18n } from "@/src/i18n";
+import { useI18n, translations } from "@/src/i18n";
 import { api } from "@/src/api";
 import { theme } from "@/src/theme";
 import type { Category, MenuItem } from "@/src/api";
@@ -68,8 +68,8 @@ export default function MenuScreen() {
           // Reconstruct: pizzas (slug=pizzas) have 26/31 prices; others use `default` or first numeric.
           prices: it.prices && Object.keys(it.prices).some((k) => k !== "default") ? it.prices : null,
           price: it.prices?.default ?? (typeof it.prices === "object" ? Object.values(it.prices || {})[0] : null) ?? null,
-          category_slug: (it.category_id && slugById.get(it.category_id)) || "pizzas",
-        }));
+          category_slug: (it.category_id && slugById.get(it.category_id)) || "",
+        })).filter((r) => r.category_slug); // hidden/deleted category = no chip to live under
         // api.publicCategories()/api.publicMenuItems() return fresh arrays on
         // every call even when nothing changed — this refetch runs on every
         // tab refocus and every 20s poll (see useFocusEffect below), so
@@ -161,9 +161,12 @@ export default function MenuScreen() {
 
   const filtered = useMemo(() => rows.filter((r) => r.category_slug === cat), [rows, cat]);
 
-  // Localised category label fallback (i18n keys exist for the canonical 7 slugs).
+  // Category label. The CMS name is authoritative, so a rename in /admin-cms
+  // shows up here. The built-in translation is only used while the name is
+  // still the stock French label (keeps "Salads"/"Drinks" for EN visitors).
   const labelFor = (c: { slug: string; name: string }) => {
-    try { const k = `categories.${c.slug}` as any; const v = t(k); if (v && v !== k) return v; } catch {}
+    const stock = (translations.fr.categories as Record<string, string>)[c.slug];
+    if (stock && stock === c.name) return t(`categories.${c.slug}`);
     return c.name;
   };
 

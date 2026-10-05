@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from "react";
-import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Alert, RefreshControl, Platform } from "react-native";
+import { View, Text, StyleSheet, ScrollView, Pressable, TextInput, ActivityIndicator, Alert, RefreshControl, Platform, KeyboardAvoidingView } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
@@ -9,6 +9,30 @@ import { theme } from "@/src/theme";
 import { pickImageFromGallery, takePhotoWithCamera } from "@/src/imagePicker";
 
 type Tab = "categories" | "items" | "settings";
+
+// Alert.alert is a no-op on react-native-web, so fall back to the browser dialogs there.
+const notify = (title: string, msg?: string) => {
+  if (Platform.OS !== "web") { Alert.alert(title, msg); return; }
+  if (typeof window !== "undefined") window.alert(msg ? `${title}\n\n${msg}` : title);
+};
+
+const confirmDelete = (title: string, msg: string) => new Promise<boolean>((resolve) => {
+  if (Platform.OS === "web") { resolve(typeof window !== "undefined" ? window.confirm(`${title}\n\n${msg}`) : true); return; }
+  Alert.alert(title, msg, [
+    { text: "Annuler", style: "cancel", onPress: () => resolve(false) },
+    { text: "Supprimer", style: "destructive", onPress: () => resolve(true) },
+  ], { cancelable: true, onDismiss: () => resolve(false) });
+});
+
+// api errors look like `409: {"detail":"…"}` — surface just the detail.
+const errMsg = (e: any) => {
+  const raw = String(e?.message || "Échec");
+  try { const d = JSON.parse(raw.replace(/^\d+:\s*/, ""))?.detail; if (typeof d === "string") return d; } catch {}
+  return raw;
+};
+
+// Same rule as the backend's _slugify: "Salades & Antipasti" -> "salades-antipasti".
+const slugify = (v: string) => v.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
 
 export default function CmsDashboard() {
   const router = useRouter();
@@ -22,6 +46,7 @@ export default function CmsDashboard() {
   const [savingId, setSavingId] = useState<string | null>(null);
   const [editing, setEditing] = useState<any>(null); // item being edited
   const [editingCat, setEditingCat] = useState<any>(null);
+  const [catErr, setCatErr] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
 
   const showToast = (m: string) => { setToast(m); setTimeout(() => setToast(null), 2500); };
@@ -65,19 +90,27 @@ export default function CmsDashboard() {
       else await api.adminCmsCreateMenuItem(payload);
       setEditing(null); showToast("Enregistré"); loadAll();
     } catch (e: any) {
-      Alert.alert("Erreur", e?.message || "Échec");
+      notify("Erreur", errMsg(e));
     } finally { setSavingId(null); }
   };
 
+  const itemCount = (catId: string) => items.filter((it) => it.category_id === catId).length;
+  const plats = (n: number) => `${n} plat${n > 1 ? "s" : ""}`;
+
+  const openCat = (c: any) => { setCatErr(null); setEditingCat(c); };
+
   const upsertCat = async (c: any) => {
     setSavingId(c.id || "new-cat");
-    const payload = { name: c.name, slug: c.slug, sort_order: Number(c.sort_order) || 0, is_active: c.is_active !== false };
+    setCatErr(null);
+    const name = (c.name || "").trim();
+    // A new category gets its slug from the name unless one was typed.
+    const payload = { name, slug: slugify(c.slug || name), sort_order: Number(c.sort_order) || 0, is_active: c.is_active !== false };
     try {
       if (c.id) await api.adminCmsUpdateCategory(c.id, payload);
       else await api.adminCmsCreateCategory(payload);
       setEditingCat(null); showToast("Catégorie enregistrée"); loadAll();
     } catch (e: any) {
-      Alert.alert("Erreur", e?.message || "Échec");
+      setCatErr(errMsg(e)); // shown inside the modal so the form stays open
     } finally { setSavingId(null); }
   };
 
@@ -87,19 +120,22 @@ export default function CmsDashboard() {
       else await api.adminCmsUpdateCategory(row.id, { is_active: !row.is_active });
       loadAll();
     } catch (e: any) {
-      Alert.alert("Erreur", e?.message || "Échec");
+      notify("Erreur", errMsg(e));
     }
   };
 
   const remove = async (table: "menu_items" | "categories", row: any) => {
-    const ok = Platform.OS === "web" ? (typeof window !== "undefined" ? window.confirm(`Supprimer « ${row.name} » ?`) : true) : true;
-    if (!ok) return;
+    const n = table === "categories" ? itemCount(row.id) : 0;
+    const msg = n > 0
+      ? `Attention : cette catégorie contient encore ${plats(n)}. Ils ne seront pas supprimés, mais ils disparaîtront de la carte client tant qu'ils ne sont pas rattachés à une autre catégorie.`
+      : "Cette action est définitive.";
+    if (!(await confirmDelete(`Supprimer « ${row.name} » ?`, msg))) return;
     try {
       if (table === "menu_items") await api.adminCmsDeleteMenuItem(row.id);
       else await api.adminCmsDeleteCategory(row.id);
       showToast("Supprimé"); loadAll();
     } catch (e: any) {
-      Alert.alert("Erreur", e?.message || "Échec");
+      notify("Erreur", errMsg(e));
     }
   };
 
@@ -113,12 +149,14 @@ export default function CmsDashboard() {
         await api.adminCmsUpdateMenuItem(row.id, { sort_order: swap.sort_order });
         await api.adminCmsUpdateMenuItem(swap.id, { sort_order: row.sort_order });
       } else {
-        await api.adminCmsUpdateCategory(row.id, { sort_order: swap.sort_order });
-        await api.adminCmsUpdateCategory(swap.id, { sort_order: row.sort_order });
+        // Renumber 1..n instead of swapping values, so the move still works
+        // when two categories share the same sort_order.
+        sorted[idx] = swap; sorted[idx + dir] = row;
+        await Promise.all(sorted.map((c, i) => (c.sort_order === i + 1 ? null : api.adminCmsUpdateCategory(c.id, { sort_order: i + 1 }))));
       }
       loadAll();
     } catch (e: any) {
-      Alert.alert("Erreur", e?.message || "Échec");
+      notify("Erreur", errMsg(e));
     }
   };
 
@@ -171,7 +209,7 @@ export default function CmsDashboard() {
       const res = await api.adminCmsUploadImage(it.id || "new", file, "original");
       originalUrl = res.url;
     } catch (e: any) {
-      Alert.alert("Erreur upload (original)", e?.message || "Échec"); return null;
+      notify("Erreur upload (original)", e?.message || "Échec"); return null;
     }
 
     // 2. Try to build + upload a thumbnail (web only — uses Canvas API; native skips this step,
@@ -194,12 +232,12 @@ export default function CmsDashboard() {
   const saveSettings = async () => {
     if (!settings) return;
     let oh: any = settings.opening_hours;
-    if (typeof oh === "string") { try { oh = JSON.parse(oh); } catch { Alert.alert("JSON invalide", "opening_hours"); return; } }
+    if (typeof oh === "string") { try { oh = JSON.parse(oh); } catch { notify("JSON invalide", "opening_hours"); return; } }
     try {
       await api.adminCmsUpdateSettings(settings.id, { opening_hours: oh, phone: settings.phone, address: settings.address });
       showToast("Paramètres sauvegardés");
     } catch (e: any) {
-      Alert.alert("Erreur", e?.message || "Échec");
+      notify("Erreur", errMsg(e));
     }
   };
 
@@ -233,6 +271,10 @@ export default function CmsDashboard() {
                   <Feather name="plus" size={14} color={theme.color.onBrandPrimary} />
                   <Text style={s.primaryBtnTxt}>Nouveau plat</Text>
                 </Pressable>
+                <Pressable testID="manage-cats" onPress={() => setTab("categories")} style={s.secondaryBtn}>
+                  <Feather name="folder" size={14} color={theme.color.brand} />
+                  <Text style={s.secondaryBtnTxt}>Gérer les catégories</Text>
+                </Pressable>
               </View>
               {items.length === 0 && <Text style={s.empty}>Aucun plat. Créez-en un.</Text>}
               {items.map((it) => {
@@ -241,7 +283,7 @@ export default function CmsDashboard() {
                   <View key={it.id} style={[s.row, !it.is_active && { opacity: 0.5 }]}>
                     <View style={{ flex: 1 }}>
                       <Text style={s.rowName}>{it.name}</Text>
-                      <Text style={s.rowSub}>{cat?.name || "—"} · {Object.entries(it.prices || {}).map(([k, v]) => `${k}: ${v}€`).join(" / ") || "sans prix"}</Text>
+                      <Text style={s.rowSub}>{cat ? `${cat.name}${cat.is_active ? "" : " (masquée)"}` : "Sans catégorie — non visible"} · {Object.entries(it.prices || {}).map(([k, v]) => `${k}: ${v}€`).join(" / ") || "sans prix"}</Text>
                     </View>
                     <Pressable onPress={() => reorder(it, -1)} style={s.iconBtn}><Feather name="arrow-up" size={14} color={theme.color.onSurface} /></Pressable>
                     <Pressable onPress={() => reorder(it, 1)} style={s.iconBtn}><Feather name="arrow-down" size={14} color={theme.color.onSurface} /></Pressable>
@@ -257,20 +299,20 @@ export default function CmsDashboard() {
           {tab === "categories" && (
             <>
               <View style={s.actionsRow}>
-                <Pressable testID="new-cat" onPress={() => setEditingCat({ is_active: true, sort_order: cats.length })} style={s.primaryBtn}><Feather name="plus" size={14} color={theme.color.onBrandPrimary} /><Text style={s.primaryBtnTxt}>Nouvelle catégorie</Text></Pressable>
+                <Pressable testID="new-cat" onPress={() => openCat({ is_active: true, sort_order: Math.max(0, ...cats.map((c) => Number(c.sort_order) || 0)) + 1 })} style={s.primaryBtn}><Feather name="plus" size={14} color={theme.color.onBrandPrimary} /><Text style={s.primaryBtnTxt}>Nouvelle catégorie</Text></Pressable>
               </View>
               {cats.length === 0 && <Text style={s.empty}>Aucune catégorie.</Text>}
-              {cats.map((c) => (
-                <View key={c.id} style={[s.row, !c.is_active && { opacity: 0.5 }]}>
-                  <View style={{ flex: 1 }}>
+              {cats.map((c, i) => (
+                <View key={c.id} testID={`cat-row-${c.slug}`} style={[s.row, !c.is_active && { opacity: 0.5 }]}>
+                  <Pressable testID={`cat-name-${c.slug}`} onPress={() => openCat(c)} style={{ flex: 1 }}>
                     <Text style={s.rowName}>{c.name}</Text>
-                    <Text style={s.rowSub}>{c.slug} · ordre {c.sort_order}</Text>
-                  </View>
-                  <Pressable onPress={() => reorder(c, -1)} style={s.iconBtn}><Feather name="arrow-up" size={14} color={theme.color.onSurface} /></Pressable>
-                  <Pressable onPress={() => reorder(c, 1)} style={s.iconBtn}><Feather name="arrow-down" size={14} color={theme.color.onSurface} /></Pressable>
-                  <Pressable onPress={() => toggleActive("categories", c)} style={s.iconBtn}><Feather name={c.is_active ? "eye" : "eye-off"} size={14} color={theme.color.brand} /></Pressable>
-                  <Pressable onPress={() => setEditingCat(c)} style={s.iconBtn}><Feather name="edit-2" size={14} color={theme.color.brand} /></Pressable>
-                  <Pressable onPress={() => remove("categories", c)} style={s.iconBtn}><Feather name="trash-2" size={14} color={theme.color.error} /></Pressable>
+                    <Text style={s.rowSub}>{plats(itemCount(c.id))} · {c.slug}{c.is_active ? "" : " · masquée"}</Text>
+                  </Pressable>
+                  <Pressable disabled={i === 0} onPress={() => reorder(c, -1)} style={[s.iconBtn, i === 0 && { opacity: 0.25 }]}><Feather name="arrow-up" size={14} color={theme.color.onSurface} /></Pressable>
+                  <Pressable disabled={i === cats.length - 1} onPress={() => reorder(c, 1)} style={[s.iconBtn, i === cats.length - 1 && { opacity: 0.25 }]}><Feather name="arrow-down" size={14} color={theme.color.onSurface} /></Pressable>
+                  <Pressable testID={`cat-toggle-${c.slug}`} onPress={() => toggleActive("categories", c)} style={s.iconBtn}><Feather name={c.is_active ? "eye" : "eye-off"} size={14} color={theme.color.brand} /></Pressable>
+                  <Pressable testID={`cat-edit-${c.slug}`} onPress={() => openCat(c)} style={s.iconBtn}><Feather name="edit-2" size={14} color={theme.color.brand} /></Pressable>
+                  <Pressable testID={`cat-delete-${c.slug}`} onPress={() => remove("categories", c)} style={s.iconBtn}><Feather name="trash-2" size={14} color={theme.color.error} /></Pressable>
                 </View>
               ))}
             </>
@@ -307,7 +349,7 @@ export default function CmsDashboard() {
                 <View style={{ flexDirection: "row", flexWrap: "wrap", gap: 6 }}>
                   {cats.map((c) => (
                     <Pressable key={c.id} onPress={() => setEditing({ ...editing, category_id: c.id })} style={[s.catChip, editing.category_id === c.id && s.catChipActive]}>
-                      <Text style={[s.catChipTxt, editing.category_id === c.id && s.catChipTxtActive]}>{c.name}</Text>
+                      <Text style={[s.catChipTxt, editing.category_id === c.id && s.catChipTxtActive]}>{c.name}{c.is_active ? "" : " (masquée)"}</Text>
                     </Pressable>
                   ))}
                 </View>
@@ -318,8 +360,8 @@ export default function CmsDashboard() {
                 {(() => {
                   const handlePicked = async (picked: any) => {
                     if (!picked) return;
-                    if (!editing.id) { Alert.alert("Enregistrez d'abord le plat", "Une image nécessite un id"); return; }
-                    if (picked.size && picked.size > 20 * 1024 * 1024) { Alert.alert("Fichier trop gros", "Max 20 MB"); return; }
+                    if (!editing.id) { notify("Enregistrez d'abord le plat", "Une image nécessite un id"); return; }
+                    if (picked.size && picked.size > 20 * 1024 * 1024) { notify("Fichier trop gros", "Max 20 MB"); return; }
                     setSavingId(editing.id);
                     const urls = await uploadImageForItem(editing, picked);
                     if (!urls) { setSavingId(null); return; }
@@ -329,7 +371,7 @@ export default function CmsDashboard() {
                       await api.adminCmsUpdateMenuItem(editing.id, payload);
                       showToast(urls.thumbnail ? "Image + miniature en ligne" : "Image en ligne");
                     } catch (e: any) {
-                      Alert.alert("Erreur enregistrement image", e?.message || "Échec");
+                      notify("Erreur enregistrement image", e?.message || "Échec");
                     }
                     setSavingId(null);
                     setEditing({ ...editing, image_url: urls.original, thumbnail_url: urls.thumbnail });
@@ -389,23 +431,29 @@ export default function CmsDashboard() {
 
         {/* ---------- Category edit modal ---------- */}
         {editingCat && (
-          <View style={s.modal}>
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : undefined} style={s.modal}>
             <View style={s.modalCard}>
-              <ScrollView contentContainerStyle={{ padding: 20 }}>
+              <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ padding: 20 }}>
                 <Text style={s.h2}>{editingCat.id ? "Modifier la catégorie" : "Nouvelle catégorie"}</Text>
-                <Text style={s.label}>Nom</Text>
-                <TextInput style={s.input} value={editingCat.name || ""} onChangeText={(v) => setEditingCat({ ...editingCat, name: v })} placeholderTextColor={theme.color.muted} />
-                <Text style={s.label}>Slug (URL-safe)</Text>
-                <TextInput style={s.input} value={editingCat.slug || ""} onChangeText={(v) => setEditingCat({ ...editingCat, slug: v.toLowerCase().replace(/[^a-z0-9-]+/g, "-") })} placeholderTextColor={theme.color.muted} />
+                <Text style={s.label}>Nom (affiché aux clients)</Text>
+                <TextInput testID="cat-name-input" autoFocus style={s.input} value={editingCat.name || ""} onChangeText={(v) => setEditingCat({ ...editingCat, name: v })} placeholder="ex : Salades" placeholderTextColor={theme.color.muted} />
+                <Text style={s.label}>Slug (identifiant technique)</Text>
+                <TextInput testID="cat-slug-input" style={s.input} autoCapitalize="none" autoCorrect={false} value={editingCat.slug ?? ""} onChangeText={(v) => setEditingCat({ ...editingCat, slug: v.toLowerCase().replace(/[^a-z0-9-]+/g, "-") })} placeholder={slugify(editingCat.name || "") || "automatique"} placeholderTextColor={theme.color.muted} />
+                <Text style={s.hint}>{editingCat.id ? "Inutile de le changer pour renommer : les plats restent rattachés à la catégorie quel que soit le slug." : "Laissez vide : il sera généré à partir du nom."}</Text>
                 <Text style={s.label}>Ordre</Text>
-                <TextInput style={s.input} keyboardType="number-pad" value={String(editingCat.sort_order ?? 0)} onChangeText={(v) => setEditingCat({ ...editingCat, sort_order: v })} placeholderTextColor={theme.color.muted} />
+                <TextInput testID="cat-order-input" style={s.input} keyboardType="number-pad" value={String(editingCat.sort_order ?? 0)} onChangeText={(v) => setEditingCat({ ...editingCat, sort_order: v.replace(/[^0-9]/g, "") })} placeholderTextColor={theme.color.muted} />
+                <Pressable testID="cat-active" onPress={() => setEditingCat({ ...editingCat, is_active: editingCat.is_active === false })} style={s.checkRow}>
+                  <Feather name={editingCat.is_active !== false ? "check-square" : "square"} size={16} color={theme.color.brand} />
+                  <Text style={s.checkTxt}>Active (visible côté client, avec ses plats)</Text>
+                </Pressable>
+                {catErr && <Text testID="cat-error" style={s.err}>{catErr}</Text>}
                 <View style={{ flexDirection: "row", gap: 8, marginTop: 14 }}>
-                  <Pressable onPress={() => setEditingCat(null)} style={[s.secondaryBtn, { flex: 1 }]}><Text style={s.secondaryBtnTxt}>Annuler</Text></Pressable>
-                  <Pressable onPress={() => upsertCat(editingCat)} disabled={!editingCat.name || !editingCat.slug || savingId !== null} style={[s.primaryBtn, { flex: 1 }]}>{savingId ? <ActivityIndicator size="small" color={theme.color.onBrandPrimary} /> : <><Feather name="save" size={14} color={theme.color.onBrandPrimary} /><Text style={s.primaryBtnTxt}>Enregistrer</Text></>}</Pressable>
+                  <Pressable testID="cat-cancel" onPress={() => setEditingCat(null)} style={[s.secondaryBtn, { flex: 1 }]}><Text style={s.secondaryBtnTxt}>Annuler</Text></Pressable>
+                  <Pressable testID="cat-save" onPress={() => upsertCat(editingCat)} disabled={!(editingCat.name || "").trim() || savingId !== null} style={[s.primaryBtn, { flex: 1 }, !(editingCat.name || "").trim() && { opacity: 0.4 }]}>{savingId ? <ActivityIndicator size="small" color={theme.color.onBrandPrimary} /> : <><Feather name="save" size={14} color={theme.color.onBrandPrimary} /><Text style={s.primaryBtnTxt}>Enregistrer</Text></>}</Pressable>
                 </View>
               </ScrollView>
             </View>
-          </View>
+          </KeyboardAvoidingView>
         )}
 
         {toast && <View style={s.toast}><Feather name="check-circle" size={14} color={theme.color.brand} /><Text style={s.toastTxt}>{toast}</Text></View>}
@@ -442,6 +490,8 @@ const s = StyleSheet.create({
   catChipActive: { backgroundColor: theme.color.brand, borderColor: theme.color.brand },
   catChipTxt: { color: theme.color.onSurfaceTertiary, fontSize: 11, fontWeight: "600" },
   catChipTxtActive: { color: theme.color.onBrandPrimary },
+  hint: { color: theme.color.muted, fontSize: 11, marginTop: 6, lineHeight: 15 },
+  err: { color: theme.color.error, fontSize: 12, marginTop: 12 },
   checkRow: { flexDirection: "row", alignItems: "center", gap: 8, marginTop: 14 },
   checkTxt: { color: theme.color.onSurface, fontSize: 13 },
   modal: { position: "absolute", top: 0, left: 0, right: 0, bottom: 0, backgroundColor: "rgba(0,0,0,0.7)", alignItems: "center", justifyContent: "center", padding: 16 },
